@@ -13,13 +13,13 @@ runs four chunks that mirror the upstream R source:
 """
 from __future__ import annotations
 
-import subprocess
 import tempfile
 from bisect import bisect_left
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import _log as log
 from ._ext import collapse_kmers as _collapse_kmers, window_compare_scores
 from .window_score import seq_win_score_int
 
@@ -449,7 +449,8 @@ def _clustalo_align(sequences: list[str], clustalo_exe: str) -> list[str]:
         with in_path.open("w") as f:
             for i, seq in enumerate(sequences, start=1):
                 f.write(f">{i}\n{seq}\n")
-        subprocess.run(
+        log.run_external(
+            "clustalo",
             [
                 clustalo_exe,
                 "-i", str(in_path),

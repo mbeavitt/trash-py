@@ -247,6 +247,7 @@ def run_pipeline(args: Any) -> None:
 
     arr_plural = "s" if len(arr_rows) != 1 else ""
     log.detail(f"{len(arr_rows)} candidate array{arr_plural}")
+    log.tool_summary("clustalo")
     log.elapsed_marker()
 
     # Canonicalise each representative; if a templates fasta was supplied,
@@ -389,6 +390,8 @@ def run_pipeline(args: Any) -> None:
     log.detail(
         f"{len(repeats_rows):,} repeats found across {len(classarrays)} arrays"
     )
+    log.tool_summary("nhmmer")
+    log.tool_summary("clustalo")
     log.elapsed_marker()
 
     # Aggregate into the final arrays table; trim the repeats table.

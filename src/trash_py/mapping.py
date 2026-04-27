@@ -15,12 +15,12 @@ from __future__ import annotations
 
 import math
 import shutil
-import subprocess
 from pathlib import Path
 from typing import Any
 
 from rapidfuzz.distance import Levenshtein
 
+from . import _log as log
 from .arrays import _clustalo_align, _consensus_N
 from .sequence import rev_comp_string
 
@@ -101,7 +101,8 @@ def map_nhmmer(
     rep_file.write_text(_fasta_bytes("reference_repeat", representative))
     seq_file.write_text(_fasta_bytes(seqID, array_sequence))
     try:
-        subprocess.run(
+        log.run_external(
+            "nhmmer",
             [nhmmer_exe, *NHMMER_ARGS, "--tblout", str(tbl_file), str(rep_file), str(seq_file)],
             capture_output=True,
             check=True,
