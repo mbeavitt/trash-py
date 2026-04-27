@@ -2,37 +2,7 @@
 `src/array/seq_win_score_int.R`."""
 from __future__ import annotations
 
-from collections import Counter
-
-
-def seq_win_score_int(start: int, end: int, kmer: int, seq: str) -> float:
-    """Score a window by the proportion of singleton kmers.
-
-    Lower score = more repetition. Returns 100 when the window is too
-    short or too thinly sampled to be informative.
-
-    `seq` is a 0-based substring spanning the window. `start` and `end`
-    are 1-based bounds on which kmer start positions inside that
-    substring are considered.
-    """
-    if (end - start) <= kmer:
-        return 100.0
-
-    # R: X in start:(end-kmer), kmer = seq[X:X+kmer-1] (1-based, inclusive).
-    # Python 0-based equivalent: i in range(start-1, end-kmer).
-    counts: Counter[str] = Counter()
-    for i in range(start - 1, end - kmer):
-        counts[seq[i:i + kmer]] += 1
-
-    for key in [k for k in counts if "n" in k or "N" in k]:
-        del counts[key]
-
-    total = sum(counts.values())
-    if total < kmer * 2:
-        return 100.0
-
-    singletons = sum(v for v in counts.values() if v == 1)
-    return 100.0 * singletons / total
+from ._ext import seq_win_score_int
 
 
 def sequence_window_score(seq: str, window_size: int, kmer: int = 10) -> list[float]:

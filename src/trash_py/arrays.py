@@ -20,12 +20,8 @@ from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ._ext import window_compare_scores
 from .window_score import seq_win_score_int
-
-try:
-    from ._ext import window_compare_scores as _window_compare_scores_fast
-except ImportError:
-    _window_compare_scores_fast = None
 
 
 @dataclass
@@ -178,13 +174,6 @@ def chunk_a_split_arrays(
     return arrays
 
 
-def _slice_1based(lst: list, start: int, end: int) -> list:
-    """Mimic R's `lst[start:end]` with 1-based inclusive indices; out-of-range
-    positions become None (matching R's NA behaviour that filters to FALSE
-    in `%in%` membership)."""
-    return [lst[i - 1] if 1 <= i <= len(lst) else None for i in range(start, end + 1)]
-
-
 def _window_comparison_scores(
     sequence: str,
     kmer: int,
@@ -195,16 +184,7 @@ def _window_comparison_scores(
 ) -> list[float]:
     if not window_starts_compare:
         return []
-    if _window_compare_scores_fast is not None:
-        return _window_compare_scores_fast(
-            sequence,
-            kmer,
-            window_starts,
-            window_ends,
-            window_starts_compare,
-            window_ends_compare,
-        )
-    return _window_comparison_scores_python(
+    return window_compare_scores(
         sequence,
         kmer,
         window_starts,
@@ -212,24 +192,6 @@ def _window_comparison_scores(
         window_starts_compare,
         window_ends_compare,
     )
-
-
-def _window_comparison_scores_python(
-    sequence: str,
-    kmer: int,
-    window_starts: list[int],
-    window_ends: list[int],
-    window_starts_compare: list[int],
-    window_ends_compare: list[int],
-) -> list[float]:
-    kmers_list = [sequence[i:i + kmer] for i in range(len(sequence) - kmer)]
-    scores = [0.0] * len(window_starts_compare)
-    for i in range(len(window_starts_compare)):
-        a = _slice_1based(kmers_list, window_starts[i], window_ends[i])
-        b = _slice_1based(kmers_list, window_starts_compare[i], window_ends_compare[i])
-        a_set = {x for x in a if x is not None}
-        scores[i] = sum(1 for x in b if x in a_set) / len(b)
-    return scores
 
 
 def chunk_b_collapse_kmers(

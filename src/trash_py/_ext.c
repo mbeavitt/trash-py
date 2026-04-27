@@ -337,6 +337,89 @@ static PyObject *run_sliding_suffix_ids(
     return scores;
 }
 
+static PyObject *seq_win_score_int_impl(PyObject *self, PyObject *args) {
+    Py_ssize_t start, end;
+    int kmer;
+    PyObject *seq_obj;
+
+    if (!PyArg_ParseTuple(args, "nniO", &start, &end, &kmer, &seq_obj)) {
+        return NULL;
+    }
+
+    if (kmer <= 0) {
+        PyErr_SetString(PyExc_ValueError, "kmer must be positive");
+        return NULL;
+    }
+
+    if ((end - start) <= (Py_ssize_t)kmer) {
+        return PyFloat_FromDouble(100.0);
+    }
+
+    PyObject *seq_bytes = PyUnicode_AsASCIIString(seq_obj);
+    if (!seq_bytes) return NULL;
+
+    Py_ssize_t seq_len = PyBytes_GET_SIZE(seq_bytes);
+    const char *sequence = PyBytes_AS_STRING(seq_bytes);
+
+    Py_ssize_t i_start = start - 1;
+    Py_ssize_t i_end_excl = end - (Py_ssize_t)kmer;
+    Py_ssize_t n_kmers = i_end_excl - i_start;
+
+    if (i_start < 0 || i_end_excl + (Py_ssize_t)kmer - 1 > seq_len) {
+        Py_DECREF(seq_bytes);
+        PyErr_SetString(PyExc_ValueError, "window extends outside sequence bounds");
+        return NULL;
+    }
+    if (n_kmers > (Py_ssize_t)UINT32_MAX) {
+        Py_DECREF(seq_bytes);
+        PyErr_SetString(PyExc_OverflowError, "too many kmers for the seq_win_score_int accelerator");
+        return NULL;
+    }
+
+    KmerIdMap map;
+    if (!id_map_init(&map, (uint32_t)n_kmers, (Py_ssize_t)kmer, sequence)) {
+        Py_DECREF(seq_bytes);
+        PyErr_NoMemory();
+        return NULL;
+    }
+
+    uint32_t *counts = PyMem_Calloc((size_t)n_kmers, sizeof(*counts));
+    if (!counts) {
+        id_map_free(&map);
+        Py_DECREF(seq_bytes);
+        PyErr_NoMemory();
+        return NULL;
+    }
+
+    for (Py_ssize_t i = i_start; i < i_end_excl; i++) {
+        int has_n = 0;
+        for (int j = 0; j < kmer; j++) {
+            char c = sequence[i + j];
+            if (c == 'n' || c == 'N') { has_n = 1; break; }
+        }
+        if (has_n) continue;
+        uint32_t id = id_map_intern(&map, i);
+        counts[id]++;
+    }
+
+    uint64_t total = 0;
+    uint64_t singletons = 0;
+    for (uint32_t id = 0; id < map.next_id; id++) {
+        total += counts[id];
+        if (counts[id] == 1u) singletons++;
+    }
+
+    id_map_free(&map);
+    PyMem_Free(counts);
+    Py_DECREF(seq_bytes);
+
+    if (total < (uint64_t)kmer * 2u) {
+        return PyFloat_FromDouble(100.0);
+    }
+
+    return PyFloat_FromDouble(100.0 * (double)singletons / (double)total);
+}
+
 // primary function to be passed up to Python
 static PyObject *window_compare_scores(PyObject *self, PyObject *args) {
     PyObject *sequence_obj;
@@ -462,6 +545,12 @@ static PyMethodDef module_methods[] = {
         window_compare_scores,
         METH_VARARGS,
         PyDoc_STR("Compute stage06 window-comparison scores for one sequence.")
+    },
+    {
+        "seq_win_score_int",
+        seq_win_score_int_impl,
+        METH_VARARGS,
+        PyDoc_STR("Score a window by the proportion of singleton kmers.")
     },
     {NULL, NULL, 0, NULL},
 };
