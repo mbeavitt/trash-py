@@ -1,6 +1,8 @@
 """End-to-end pipeline orchestrator."""
 from __future__ import annotations
 
+import shutil
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -37,10 +39,40 @@ ARRAYS_PER_CHUNK = 100
 KMER = 10
 
 
+# External programs the pipeline shells out to. Both must be on PATH.
+# Install via bioconda (works on macOS, Linux, Windows-WSL):
+#     conda install -c bioconda clustalo hmmer
+_EXTERNAL_TOOLS: dict[str, str] = {
+    "clustalo": "Clustal Omega — `conda install -c bioconda clustalo`",
+    "nhmmer": "HMMER (provides nhmmer) — `conda install -c bioconda hmmer`",
+}
+
+
+def check_external_tools(tools: dict[str, str] = _EXTERNAL_TOOLS) -> list[str]:
+    """Return the names of tools missing from PATH (empty list if all present)."""
+    return [name for name in tools if shutil.which(name) is None]
+
+
+def _require_external_tools() -> None:
+    missing = check_external_tools()
+    if not missing:
+        return
+    lines = [
+        "trash-py needs the following external programs on your PATH:",
+        "",
+    ]
+    for name in missing:
+        lines.append(f"  - {name}: not found")
+        lines.append(f"      install: {_EXTERNAL_TOOLS[name]}")
+    print("\n".join(lines), file=sys.stderr)
+    raise SystemExit(2)
+
+
 def run_pipeline(args: Any) -> None:
     """Drive the pipeline. `args` must expose `.fasta`, `.output`,
     `.max_rep_size`, `.min_rep_size`, and (optionally) `.templates`.
     """
+    _require_external_tools()
     output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
     fasta_name = Path(args.fasta).name
