@@ -38,24 +38,26 @@ def summarise_arrays(
     on real inputs but is the literal behaviour to match for parity.
     """
     out = [dict(a) for a in arrays]
+    by_array_id: dict[int, list[dict]] = {}
     first_repeat_by_one_based: dict[int, dict] = {}
     for r in repeats:
         key = int(r["arrayID"])
+        by_array_id.setdefault(key, []).append(r)
         if key not in first_repeat_by_one_based:
             first_repeat_by_one_based[key] = r
 
     for i, arr in enumerate(out):
         anid = int(arr["array_num_ID"])
-        has_any = any(int(r["arrayID"]) == anid for r in repeats)
-        if has_any:
+        if anid in by_array_id:
             lookup = first_repeat_by_one_based.get(i + 1)
             if lookup is not None:
                 arr["representative"] = lookup["representative"]
 
     for arr in out:
         anid = int(arr["array_num_ID"])
-        widths = [int(r["width"]) for r in repeats if int(r["arrayID"]) == anid]
-        scores = [float(r["score"]) for r in repeats if int(r["arrayID"]) == anid]
+        bucket = by_array_id.get(anid, ())
+        widths = [int(r["width"]) for r in bucket]
+        scores = [float(r["score"]) for r in bucket]
         arr["repeats_number"] = len(widths)
         arr["median_repeat_width"] = math.ceil(statistics.median(widths)) if widths else 0
         arr["median_score"] = math.ceil(statistics.median(scores)) if scores else -1
