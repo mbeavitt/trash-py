@@ -5,6 +5,7 @@ __pycache__/
 build/
 dist/
 .eggs/
+*.swp
 
 # Compiled C extension artefacts
 src/trash_py/*.so
