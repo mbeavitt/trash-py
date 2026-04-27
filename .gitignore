@@ -6,6 +6,7 @@ build/
 dist/
 .eggs/
 *.swp
+*.svg
 
 # Compiled C extension artefacts
 src/trash_py/*.so
