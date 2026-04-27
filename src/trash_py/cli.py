@@ -5,6 +5,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from . import _log as log
 from .pipeline import run_pipeline
 
 
@@ -23,11 +24,13 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="optional template fasta — assigns class names from headers",
     )
+    p.add_argument("-q", "--quiet", action="store_true", help="suppress progress output")
     return p
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    log.configure(quiet=args.quiet)
     if not args.fasta.exists():
         print(f"fasta not found: {args.fasta}", file=sys.stderr)
         return 2
