@@ -7,7 +7,7 @@ name = "trash-py"
 version = "0.1.0"
 description = "Tandem-repeat array identifier — Python port of TRASH."
 requires-python = ">=3.11"
-license = { text = "GPL-3.0-or-later" }
+license = { file = "LICENSE" }
 authors = [
     { name = "Michael Beavitt" },
 ]
@@ -15,6 +15,7 @@ keywords = ["bioinformatics", "tandem-repeat", "satellite-dna", "centromere", "g
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -35,6 +36,7 @@ trash-py = "trash_py.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/mbeavitt/TRASH-py"
+Upstream = "https://github.com/vlothec/TRASH_2"
 
 [tool.setuptools.packages.find]
 where = ["src"]
