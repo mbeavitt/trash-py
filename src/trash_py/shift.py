@@ -12,34 +12,8 @@ from typing import Sequence
 
 from rapidfuzz.distance import Levenshtein
 
+from ._ext import shift_scores
 from .sequence import rev_comp_string
-
-
-def kmer_hash_score(kmer: str) -> int:
-    """Position-weighted base-4 hash of a kmer (`a=0, c=1, t=2, g=3`)."""
-    values = {"a": 0, "c": 1, "t": 2, "g": 3}
-    total = 0
-    for i, ch in enumerate(kmer, start=1):
-        total += (4 ** i) * values.get(ch, 0)
-    return total
-
-
-def _pearson_corr(x: list[int], y: list[int]) -> float:
-    n = len(x)
-    mx = sum(x) / n
-    my = sum(y) / n
-    sxy = 0.0
-    sxx = 0.0
-    syy = 0.0
-    for xi, yi in zip(x, y):
-        dx = xi - mx
-        dy = yi - my
-        sxy += dx * dy
-        sxx += dx * dx
-        syy += dy * dy
-    if sxx == 0 or syy == 0:
-        return math.nan
-    return sxy / math.sqrt(sxx * syy)
 
 
 def _argmin_first(values: list[float]) -> int:
@@ -59,18 +33,8 @@ def shift_sequence(sequence: str, k: int = 6) -> str:
         return sequence
 
     n = len(sequence)
-    repeats_needed = -(-(n + k) // n)
-
-    def shift_scores(seq: str) -> list[float]:
-        extended = seq * repeats_needed
-        kmers = [extended[i:i + k] for i in range(n)]
-        scores = [kmer_hash_score(km) for km in kmers]
-        scores_doubled = scores + scores
-        x = list(range(1, n + 1))
-        return [_pearson_corr(x, scores_doubled[j:j + n]) for j in range(n)]
-
-    fw = shift_scores(sequence)
-    rev = shift_scores(rev_comp_string(sequence))
+    fw = shift_scores(sequence, k)
+    rev = shift_scores(rev_comp_string(sequence), k)
 
     all_shifts = fw + rev
     best_idx = _argmin_first(all_shifts)

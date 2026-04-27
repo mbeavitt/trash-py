@@ -586,6 +586,124 @@ error:
     return NULL;
 }
 
+static PyObject *shift_scores_impl(PyObject *self, PyObject *args) {
+    PyObject *seq_obj;
+    int k;
+
+    if (!PyArg_ParseTuple(args, "Oi", &seq_obj, &k)) return NULL;
+    if (k <= 0) {
+        PyErr_SetString(PyExc_ValueError, "k must be positive");
+        return NULL;
+    }
+
+    PyObject *seq_bytes = PyUnicode_AsASCIIString(seq_obj);
+    if (!seq_bytes) return NULL;
+
+    Py_ssize_t n = PyBytes_GET_SIZE(seq_bytes);
+    if (n == 0) {
+        Py_DECREF(seq_bytes);
+        return PyList_New(0);
+    }
+
+    const char *seq = PyBytes_AS_STRING(seq_bytes);
+
+    long *scores = PyMem_Malloc((size_t)n * sizeof(*scores));
+    if (!scores) {
+        Py_DECREF(seq_bytes);
+        PyErr_NoMemory();
+        return NULL;
+    }
+
+    // scores[i] = sum_{j=0..k-1} 4^(j+1) * value(seq[(i+j) mod n])
+    // bases: a=0, c=1, t=2, g=3, anything else=0 (matches Python's dict.get(...,0))
+    for (Py_ssize_t i = 0; i < n; i++) {
+        long h = 0;
+        long w = 4;
+        Py_ssize_t p = i;
+        for (int j = 0; j < k; j++) {
+            int v;
+            switch (seq[p]) {
+                case 'a': case 'A': v = 0; break;
+                case 'c': case 'C': v = 1; break;
+                case 't': case 'T': v = 2; break;
+                case 'g': case 'G': v = 3; break;
+                default: v = 0; break;
+            }
+            h += w * v;
+            w *= 4;
+            if (++p == n) p = 0;
+        }
+        scores[i] = h;
+    }
+
+    // y for shift j is `scores` rotated by j → my, sum(y^2), syy are constant across j.
+    // Compute via the same accumulation order as the Python reference so fp errors match.
+    double mx = (double)(n + 1) / 2.0;
+    double sxx = 0.0;
+    for (Py_ssize_t i = 1; i <= n; i++) {
+        double dx = (double)i - mx;
+        sxx += dx * dx;
+    }
+
+    double sum_scores = 0.0;
+    for (Py_ssize_t i = 0; i < n; i++) sum_scores += (double)scores[i];
+    double my = sum_scores / (double)n;
+
+    double syy = 0.0;
+    for (Py_ssize_t i = 0; i < n; i++) {
+        double dy = (double)scores[i] - my;
+        syy += dy * dy;
+    }
+
+    PyObject *result = PyList_New(n);
+    if (!result) {
+        PyMem_Free(scores);
+        Py_DECREF(seq_bytes);
+        return NULL;
+    }
+
+    if (sxx == 0.0 || syy == 0.0) {
+        for (Py_ssize_t j = 0; j < n; j++) {
+            PyObject *value = PyFloat_FromDouble(NAN);
+            if (!value) {
+                Py_DECREF(result);
+                PyMem_Free(scores);
+                Py_DECREF(seq_bytes);
+                return NULL;
+            }
+            PyList_SET_ITEM(result, j, value);
+        }
+        PyMem_Free(scores);
+        Py_DECREF(seq_bytes);
+        return result;
+    }
+
+    double denom = sqrt(sxx * syy);
+
+    for (Py_ssize_t j = 0; j < n; j++) {
+        double sxy = 0.0;
+        Py_ssize_t p = j;
+        for (Py_ssize_t i = 1; i <= n; i++) {
+            double dx = (double)i - mx;
+            double dy = (double)scores[p] - my;
+            sxy += dx * dy;
+            if (++p == n) p = 0;
+        }
+        PyObject *value = PyFloat_FromDouble(sxy / denom);
+        if (!value) {
+            Py_DECREF(result);
+            PyMem_Free(scores);
+            Py_DECREF(seq_bytes);
+            return NULL;
+        }
+        PyList_SET_ITEM(result, j, value);
+    }
+
+    PyMem_Free(scores);
+    Py_DECREF(seq_bytes);
+    return result;
+}
+
 // primary function to be passed up to Python
 static PyObject *window_compare_scores(PyObject *self, PyObject *args) {
     PyObject *sequence_obj;
@@ -723,6 +841,12 @@ static PyMethodDef module_methods[] = {
         collapse_kmers_impl,
         METH_VARARGS,
         PyDoc_STR("Greedy Hamming-distance clustering of kmer names.")
+    },
+    {
+        "shift_scores",
+        shift_scores_impl,
+        METH_VARARGS,
+        PyDoc_STR("Pearson correlations of position-weighted kmer hashes against rotations.")
     },
     {NULL, NULL, 0, NULL},
 };
