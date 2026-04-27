@@ -462,7 +462,7 @@ def chunk_d_consensus(
     """Return `(score, top_N_final, representative)`."""
     max_repeats_to_align = 10
     sub = sequence[array.start - 1:array.end]
-    win = seq_win_score_int(1, array.end - array.start + 1, 10, sub, 0.5)
+    win = seq_win_score_int(1, array.end - array.start + 1, 10, sub)
     score = 100.0 - win
 
     if not collapsed or not top_N_distances:
@@ -581,7 +581,7 @@ def split_and_check_arrays(
                 )
         if score is None:
             sub = sequence[arr.start - 1:arr.end]
-            win = seq_win_score_int(1, arr.end - arr.start + 1, kmer, sub, 0.5)
+            win = seq_win_score_int(1, arr.end - arr.start + 1, kmer, sub)
             score = 100.0 - win
 
         rows.append(ArrayRow(

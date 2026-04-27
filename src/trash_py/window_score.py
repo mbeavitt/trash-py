@@ -7,7 +7,7 @@ from collections import Counter
 from .genomic_bins import genomic_bins_starts
 
 
-def seq_win_score_int(start: int, end: int, kmer: int, seq: str, fraction_p: float = 0.5) -> float:
+def seq_win_score_int(start: int, end: int, kmer: int, seq: str) -> float:
     """Score a window by the proportion of singleton kmers.
 
     Lower score = more repetition. Returns 100 when the window is too
@@ -39,7 +39,6 @@ def seq_win_score_int(start: int, end: int, kmer: int, seq: str, fraction_p: flo
 
 def sequence_window_score(seq: str, window_size: int, kmer: int = 10) -> list[float]:
     """Produce a per-window singleton-kmer score across the whole sequence."""
-    fraction_p = 0.5
     if (window_size // 2) <= kmer:
         raise ValueError("sequence_window_score: window size is too small")
 
@@ -61,7 +60,7 @@ def sequence_window_score(seq: str, window_size: int, kmer: int = 10) -> list[fl
     scores: list[float] = []
     for s, e in zip(starts, ends):
         sub = seq[s - 1:e]  # 1-based inclusive → 0-based slice
-        scores.append(seq_win_score_int(1, window_size, kmer, sub, fraction_p))
+        scores.append(seq_win_score_int(1, window_size, kmer, sub))
 
     if not scores or any(sc != sc for sc in scores):  # NaN check
         raise RuntimeError("sequence_window_score did not produce valid result")
