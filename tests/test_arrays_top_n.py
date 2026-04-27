@@ -3,7 +3,6 @@ from __future__ import annotations
 import random
 from collections import Counter
 
-from trash_py.genomic_bins import genomic_bins_starts
 from trash_py.arrays import ArrayBreaks, CollapsedKmer, chunk_c_top_n
 
 
@@ -51,7 +50,11 @@ def _chunk_c_top_n_reference(
 
     kmer_starts_2 = [s + d for s, d in zip(kmer_starts, distances)]
 
-    window_starts = genomic_bins_starts(start=array.start, end=array.end, bin_size=small_window_step)
+    window_starts = list(
+        range(array.start, array.end - small_window_step + 1, small_window_step)
+    ) or [array.start]
+    if len(window_starts) > 1 and array.end - window_starts[-1] < small_window_step / 2:
+        window_starts.pop()
     if len(window_starts) < 2:
         window_ends = [array.end]
     else:

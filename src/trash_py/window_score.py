@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from collections import Counter
 
-from .genomic_bins import genomic_bins_starts
-
 
 def seq_win_score_int(start: int, end: int, kmer: int, seq: str) -> float:
     """Score a window by the proportion of singleton kmers.
@@ -38,29 +36,23 @@ def seq_win_score_int(start: int, end: int, kmer: int, seq: str) -> float:
 
 
 def sequence_window_score(seq: str, window_size: int, kmer: int = 10) -> list[float]:
-    """Produce a per-window singleton-kmer score across the whole sequence."""
+    """Produce a per-window singleton-kmer score across the whole sequence.
+
+    Windows of `window_size` tile the sequence non-overlapping; the trailing
+    window is dropped if less than half a window of sequence remains after it.
+    """
     if (window_size // 2) <= kmer:
         raise ValueError("sequence_window_score: window size is too small")
 
     n = len(seq)
-    sliding = window_size  # R: ceiling(window_size / 1)
+    starts = list(range(0, max(n - window_size, 1), window_size))
+    if len(starts) > 1 and n - starts[-1] - 1 < window_size / 2:
+        starts.pop()
 
-    if sliding >= n:
-        starts = [1]
-        ends = [n]
-    else:
-        starts = genomic_bins_starts(start=1, end=n, bin_size=sliding)
-        starts = [s for s in starts if s < n]
-        if len(starts) == 1:
-            ends = [n]
-        else:
-            ends = [starts[i + 1] - 1 + window_size for i in range(len(starts) - 1)] + [n + window_size]
-            ends = [min(e, n) for e in ends]
-
-    scores: list[float] = []
-    for s, e in zip(starts, ends):
-        sub = seq[s - 1:e]  # 1-based inclusive → 0-based slice
-        scores.append(seq_win_score_int(1, window_size, kmer, sub))
+    scores = [
+        seq_win_score_int(1, window_size, kmer, seq[s : s + window_size])
+        for s in starts
+    ]
 
     if not scores or any(sc != sc for sc in scores):  # NaN check
         raise RuntimeError("sequence_window_score did not produce valid result")

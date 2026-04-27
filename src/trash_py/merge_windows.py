@@ -3,8 +3,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .genomic_bins import genomic_bins_starts
-
 
 @dataclass
 class Region:
@@ -19,19 +17,14 @@ def merge_windows(scores: list[float], window_size: int, sequence_full_length: i
     if not any(s < threshold for s in scores):
         return []
 
-    sliding = window_size
     n = sequence_full_length
-    if sliding >= n:
-        starts = [1]
-        ends = [n]
-    else:
-        starts = genomic_bins_starts(start=1, end=n, bin_size=sliding)
-        starts = [s for s in starts if s < n]
-        if len(starts) == 1:
-            ends = [n]
-        else:
-            ends = [starts[i + 1] - 1 + window_size for i in range(len(starts) - 1)] + [n + window_size]
-            ends = [min(e, n) for e in ends]
+    starts = list(range(1, max(n - window_size + 1, 2), window_size))
+    if len(starts) > 1 and n - starts[-1] < window_size / 2:
+        starts.pop()
+    # Each window's region extends 2 * window_size from its start, capped at n;
+    # the final region always ends at n.
+    ends = [min(s + 2 * window_size - 1, n) for s in starts]
+    ends[-1] = n
 
     if len(starts) == 1:
         return [Region(starts[0], n, scores[0])]

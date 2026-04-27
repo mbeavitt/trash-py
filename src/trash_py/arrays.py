@@ -20,7 +20,6 @@ from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .genomic_bins import genomic_bins_starts
 from .window_score import seq_win_score_int
 
 try:
@@ -89,9 +88,11 @@ def chunk_a_split_arrays(
     windows_comparison_score: list[float] = []
 
     if (end - window_size) > start:
-        window_starts = genomic_bins_starts(
-            start=start, end=end - window_size, bin_size=window_step
-        )
+        window_starts = list(
+            range(start, end - window_size - window_step + 1, window_step)
+        ) or [start]
+        if len(window_starts) > 1 and (end - window_size) - window_starts[-1] < window_step / 2:
+            window_starts.pop()
         if len(window_starts) < 2:
             window_ends = [end - window_size]
         else:
@@ -342,7 +343,11 @@ def chunk_c_top_n(
     small_window_step = 100
     small_window_min = small_window_size / small_window_step  # 10
 
-    window_starts = genomic_bins_starts(start=array.start, end=array.end, bin_size=small_window_step)
+    window_starts = list(
+        range(array.start, array.end - small_window_step + 1, small_window_step)
+    ) or [array.start]
+    if len(window_starts) > 1 and array.end - window_starts[-1] < small_window_step / 2:
+        window_starts.pop()
     if len(window_starts) < 2:
         window_ends = [array.end]
     else:
