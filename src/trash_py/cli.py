@@ -25,6 +25,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="optional template fasta — assigns class names from headers",
     )
     p.add_argument("-q", "--quiet", action="store_true", help="suppress progress output")
+    p.add_argument(
+        "-p",
+        "--threads",
+        type=int,
+        default=1,
+        help="worker threads for per-array repeat mapping (default 1; 0 = auto/cpu_count)",
+    )
     return p
 
 

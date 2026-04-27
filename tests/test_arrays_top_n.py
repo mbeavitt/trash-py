@@ -3,7 +3,7 @@ from __future__ import annotations
 import random
 from collections import Counter
 
-from trash_py.arrays import ArrayBreaks, CollapsedKmer, chunk_c_top_n
+from trash_py.arrays import ArrayBreaks, CollapsedKmer, find_top_repeat_distances
 
 
 def _clone_collapsed(collapsed: list[CollapsedKmer]) -> list[CollapsedKmer]:
@@ -22,7 +22,7 @@ def _snapshot(collapsed: list[CollapsedKmer]) -> list[tuple[list[int], list[int]
     return [(list(cluster.locations), list(cluster.distances)) for cluster in collapsed]
 
 
-def _chunk_c_top_n_reference(
+def _find_top_repeat_distances_reference(
     collapsed: list[CollapsedKmer],
     array: ArrayBreaks,
     max_repeat: int,
@@ -118,7 +118,7 @@ def _chunk_c_top_n_reference(
     return top_n, top_5_n, top_n_distances
 
 
-def test_chunk_c_top_n_matches_reference_randomized() -> None:
+def test_find_top_repeat_distances_matches_reference_randomized() -> None:
     rng = random.Random(0)
 
     for _ in range(40):
@@ -143,14 +143,14 @@ def test_chunk_c_top_n_matches_reference_randomized() -> None:
         got_input = _clone_collapsed(collapsed)
         ref_input = _clone_collapsed(collapsed)
 
-        got = chunk_c_top_n(got_input, array, max_repeat=1000, min_repeat=7)
-        expected = _chunk_c_top_n_reference(ref_input, array, max_repeat=1000, min_repeat=7)
+        got = find_top_repeat_distances(got_input, array, max_repeat=1000, min_repeat=7)
+        expected = _find_top_repeat_distances_reference(ref_input, array, max_repeat=1000, min_repeat=7)
 
         assert got == expected
         assert _snapshot(got_input) == _snapshot(ref_input)
 
 
-def test_chunk_c_top_n_matches_reference_overlap_case() -> None:
+def test_find_top_repeat_distances_matches_reference_overlap_case() -> None:
     array = ArrayBreaks(start=1, end=1600, seqID="seq", numID=1)
     collapsed = [
         CollapsedKmer(kmers=["a"], count=14, locations=[50, 240, 430, 620, 810, 1000, 1190], distances=[]),
@@ -161,8 +161,8 @@ def test_chunk_c_top_n_matches_reference_overlap_case() -> None:
     got_input = _clone_collapsed(collapsed)
     ref_input = _clone_collapsed(collapsed)
 
-    got = chunk_c_top_n(got_input, array, max_repeat=1000, min_repeat=7)
-    expected = _chunk_c_top_n_reference(ref_input, array, max_repeat=1000, min_repeat=7)
+    got = find_top_repeat_distances(got_input, array, max_repeat=1000, min_repeat=7)
+    expected = _find_top_repeat_distances_reference(ref_input, array, max_repeat=1000, min_repeat=7)
 
     assert got == expected
     assert _snapshot(got_input) == _snapshot(ref_input)

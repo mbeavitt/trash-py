@@ -25,6 +25,7 @@ classifiers = [
 dependencies = [
     "biopython>=1.83",
     "numpy>=1.26",
+    "pyhmmer>=0.10",
     "rapidfuzz>=3.6",
 ]
 

@@ -14,10 +14,10 @@ Pipeline (per array):
 from __future__ import annotations
 
 import math
-import shutil
-from pathlib import Path
+import threading
 from typing import Any
 
+from pyhmmer import easel, plan7
 from rapidfuzz.distance import Levenshtein
 
 from . import _log as log
@@ -30,56 +30,29 @@ _COMP_ONLY = str.maketrans("acgtn", "tgcan")
 
 RepeatRow = dict[str, Any]
 
-NHMMER_ARGS = ("--popen", "0.1", "--pextend", "0.8", "--dna")
+
+# Alphabet + Background are immutable post-construction → safe to share.
+# Builder + LongTargetsPipeline carry mutable per-search state → per-thread.
+_ALPHABET = easel.Alphabet.dna()
+_BACKGROUND = plan7.Background(_ALPHABET)
+_THREAD_LOCAL = threading.local()
 
 
-def _fasta_bytes(header: str, sequence: str, width: int = 60) -> str:
-    wrapped = "\n".join(sequence[i:i + width] for i in range(0, len(sequence), width))
-    return f">{header}\n{wrapped}\n"
+def _nhmmer_state():
+    """Return (alphabet, background, builder, pipeline) for the current thread.
 
-
-def _parse_nhmmer_tblout(path: Path, seqID: str, arrayID: int) -> list[RepeatRow]:
-    """Port of `read_and_format_nhmmer.R`.
-
-    nhmmer --tblout columns (DNA search): target, accession, query,
-    accession, hmmfrom, hmm to, alifrom, ali to, envfrom, env to, sq len,
-    strand, E-value, score, bias, description of target.
+    Mirrors the upstream `nhmmer --popen 0.1 --pextend 0.8 --dna` invocation:
+    `popen`/`pextend` go into the Builder (single-sequence HMM construction),
+    DNA alphabet selects the LongTargetsPipeline. Builder + Pipeline are
+    thread-local because pyhmmer pipelines hold mutable search state.
     """
-    rows: list[RepeatRow] = []
-    if not path.exists():
-        return rows
-    for line in path.read_text().splitlines():
-        if "#" in line:
-            continue
-        stripped = line.strip()
-        if not stripped:
-            continue
-        fields = stripped.split()
-        if len(fields) < 14:
-            continue
-        alifrom = int(fields[6])
-        ali_to = int(fields[7])
-        envfrom = int(fields[8])
-        env_to = int(fields[9])
-        strand = fields[11]
-        evalue = float(fields[12])
-        score = float(fields[13])
-
-        # R swaps the "from"/"to" pair for "-" strand so start < end.
-        if strand == "-":
-            alifrom, ali_to = ali_to, alifrom
-            envfrom, env_to = env_to, envfrom
-
-        rows.append({
-            "seqID": seqID,
-            "arrayID": arrayID,
-            "start": envfrom,
-            "end": env_to,
-            "strand": strand,
-            "score": score,
-            "eval": evalue,
-        })
-    return rows
+    builder = getattr(_THREAD_LOCAL, "builder", None)
+    if builder is None:
+        builder = plan7.Builder(_ALPHABET, popen=0.1, pextend=0.8)
+        pipeline = plan7.LongTargetsPipeline(_ALPHABET, background=_BACKGROUND)
+        _THREAD_LOCAL.builder = builder
+        _THREAD_LOCAL.pipeline = pipeline
+    return _ALPHABET, _BACKGROUND, builder, _THREAD_LOCAL.pipeline
 
 
 def map_nhmmer(
@@ -88,34 +61,43 @@ def map_nhmmer(
     seqID: str,
     arrayID: int,
     start_offset: int,
-    output_folder: Path,
-    nhmmer_exe: str = "nhmmer",
 ) -> list[RepeatRow]:
-    """Run nhmmer against the array sequence and parse --tblout."""
-    output_folder = Path(output_folder)
-    output_folder.mkdir(parents=True, exist_ok=True)
-    rep_file = output_folder / f"Array_{arrayID}_repeat.fasta"
-    seq_file = output_folder / f"Array_{arrayID}_sequence.fasta"
-    tbl_file = output_folder / f"nhmmer_{arrayID}_output.txt"
+    """Search `array_sequence` for matches to `representative` via pyhmmer's
+    long-target nhmmer pipeline. Output mirrors the columns produced by the
+    nhmmer `--tblout` file the R upstream parsed."""
+    alphabet, background, builder, pipeline = _nhmmer_state()
 
-    rep_file.write_text(_fasta_bytes("reference_repeat", representative))
-    seq_file.write_text(_fasta_bytes(seqID, array_sequence))
-    try:
-        log.run_external(
-            "nhmmer",
-            [nhmmer_exe, *NHMMER_ARGS, "--tblout", str(tbl_file), str(rep_file), str(seq_file)],
-            capture_output=True,
-            check=True,
-        )
-        rows = _parse_nhmmer_tblout(tbl_file, seqID, arrayID)
-    finally:
-        for p in (rep_file, seq_file, tbl_file):
-            if p.exists():
-                p.unlink()
+    query = easel.TextSequence(
+        name=b"reference_repeat",
+        sequence=representative,
+    ).digitize(alphabet)
+    subject = easel.TextSequence(
+        name=seqID.encode(),
+        sequence=array_sequence,
+    ).digitize(alphabet)
+    db = easel.DigitalSequenceBlock(alphabet, [subject])
 
-    for r in rows:
-        r["start"] += start_offset - 1
-        r["end"] += start_offset - 1
+    with log.time_external("nhmmer"):
+        hmm, _, _ = builder.build(query, background)
+        hits = pipeline.search_hmm(hmm, db)
+
+    rows: list[RepeatRow] = []
+    for hit in hits:
+        for domain in hit.domains:
+            env_from = domain.env_from
+            env_to = domain.env_to
+            # nhmmer reports - strand with env_from > env_to; flip so start < end.
+            if domain.strand == "-":
+                env_from, env_to = env_to, env_from
+            rows.append({
+                "seqID": seqID,
+                "arrayID": arrayID,
+                "start": env_from + start_offset - 1,
+                "end": env_to + start_offset - 1,
+                "strand": domain.strand,
+                "score": float(domain.score),
+                "eval": float(domain.i_evalue),
+            })
     return rows
 
 
@@ -178,17 +160,10 @@ def map_repeats(
     seqID: str,
     arrayID: int,
     start_offset: int,
-    output_folder: Path | None = None,
-    nhmmer_exe: str | None = None,
 ) -> list[RepeatRow]:
     """Dispatch to nhmmer or default matcher based on `top_N`."""
     if top_N >= 14:
-        if output_folder is None:
-            raise ValueError("output_folder required for nhmmer path")
-        return map_nhmmer(
-            representative, array_sequence, seqID, arrayID, start_offset,
-            output_folder, nhmmer_exe or shutil.which("nhmmer") or "nhmmer",
-        )
+        return map_nhmmer(representative, array_sequence, seqID, arrayID, start_offset)
     return map_default(representative, array_sequence, seqID, arrayID, start_offset)
 
 

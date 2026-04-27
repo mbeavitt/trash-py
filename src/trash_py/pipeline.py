@@ -1,8 +1,10 @@
 """End-to-end pipeline orchestrator."""
 from __future__ import annotations
 
+import os
 import shutil
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -41,18 +43,28 @@ ARRAYS_PER_CHUNK = 100
 KMER = 10
 
 
-# External programs the pipeline shells out to. Both must be on PATH.
-# Install via bioconda (works on macOS, Linux, Windows-WSL):
-#     conda install -c bioconda clustalo hmmer
+# External programs the pipeline shells out to. Install via bioconda
+# (works on macOS, Linux, Windows-WSL):
+#     conda install -c bioconda clustalo
 _EXTERNAL_TOOLS: dict[str, str] = {
     "clustalo": "Clustal Omega — `conda install -c bioconda clustalo`",
-    "nhmmer": "HMMER (provides nhmmer) — `conda install -c bioconda hmmer`",
 }
 
 
 def check_external_tools(tools: dict[str, str] = _EXTERNAL_TOOLS) -> list[str]:
     """Return the names of tools missing from PATH (empty list if all present)."""
     return [name for name in tools if shutil.which(name) is None]
+
+
+def _resolve_thread_count(requested: int) -> int:
+    """Translate a user-supplied --threads value into a worker count.
+
+    `0` (the default) → CPU count. Negative or oversized values are
+    clamped to a minimum of 1.
+    """
+    if requested <= 0:
+        return max(os.cpu_count() or 1, 1)
+    return max(requested, 1)
 
 
 def _require_external_tools() -> None:
@@ -312,20 +324,26 @@ def run_pipeline(args: Any) -> None:
         return
 
     # Per-array repeat mapping with overlap/gap cleanup, rescore, and
-    # edge-repeat refinement.
+    # edge-repeat refinement. Each array is independent of every other,
+    # so we flatten the per-seqID/per-chunk/per-array nesting into a
+    # work-item list and dispatch across a thread pool. Threads are the
+    # right primitive here: pyhmmer, rapidfuzz, and the clustalo
+    # subprocess all release the GIL, and the fasta sequence shares
+    # for free between threads.
     log.section("mapping repeats")
     fasta_by_seqID = {name: seq for name, seq in fasta}
-    repeats_rows: list[dict] = []
 
     by_seq: dict[str, list[dict]] = {}
     for arr in classarrays:
         by_seq.setdefault(arr["seqID"], []).append(arr)
 
+    # Build the work-item list. Each item carries everything the worker
+    # needs so the worker can be pure (no shared mutable state).
+    # Chunk-boundary arrays are intentionally enqueued twice (matches the
+    # R upstream's overlap chunking — `summarise_arrays` later dedupes).
+    work_items: list[dict[str, Any]] = []
     for seqID, arrs_in_seq in by_seq.items():
         fasta_seq = fasta_by_seqID[seqID]
-        # Match upstream chunking: chunk_edges = [0, 100, 200, ..., n-1]
-        # so the boundary array on each chunk is processed (and appended)
-        # twice. The downstream sort+dedup hides this from the output.
         n = len(arrs_in_seq)
         chunk_edges = list(range(0, n, ARRAYS_PER_CHUNK))
         chunk_edges.append(n - 1)
@@ -337,55 +355,75 @@ def run_pipeline(args: Any) -> None:
             last_end = int(chunk[-1]["end"])
             sequence_substring = fasta_seq[first_start - 1:last_end - 1]
             adjust_start = first_start - 1
-
             for arr in chunk:
                 if arr["representative"] == "":
                     continue
                 a_start = int(arr["start"])
                 a_end = int(arr["end"])
-                array_sequence = fasta_seq[a_start - 1:a_end]
+                work_items.append({
+                    "arr": arr,
+                    "seqID": seqID,
+                    "array_sequence": fasta_seq[a_start - 1:a_end],
+                    "a_start": a_start,
+                    "sequence_substring": sequence_substring,
+                    "adjust_start": adjust_start,
+                })
 
-                rows = map_repeats(
-                    representative=arr["representative"],
-                    top_N=int(arr["top_N"]),
-                    array_sequence=array_sequence,
-                    seqID=seqID,
-                    arrayID=int(arr["array_num_ID"]),
-                    start_offset=a_start,
-                    output_folder=output_dir,
-                )
-                if len(rows) < 2:
-                    continue
+    def _process_array(item: dict[str, Any]) -> list[dict]:
+        arr = item["arr"]
+        rows = map_repeats(
+            representative=arr["representative"],
+            top_N=int(arr["top_N"]),
+            array_sequence=item["array_sequence"],
+            seqID=item["seqID"],
+            arrayID=int(arr["array_num_ID"]),
+            start_offset=item["a_start"],
+        )
+        if len(rows) < 2:
+            return []
 
-                rows = clean_overlaps(
-                    rows=rows,
-                    representative_len=int(arr["top_N"]),
-                    arr_class=arr["class"],
-                )
-                if len(rows) < 3:
-                    continue
+        rows = clean_overlaps(
+            rows=rows,
+            representative_len=int(arr["top_N"]),
+            arr_class=arr["class"],
+        )
+        if len(rows) < 3:
+            return []
 
-                rows = rescore_repeats(
-                    rows=rows,
-                    arr_representative=arr["representative"],
-                    arr_class=arr["class"],
-                    top_N=int(arr["top_N"]),
-                    array_sequence=array_sequence,
-                    array_start=a_start,
-                    templates=templates_by_name,
-                )
+        rows = rescore_repeats(
+            rows=rows,
+            arr_representative=arr["representative"],
+            arr_class=arr["class"],
+            top_N=int(arr["top_N"]),
+            array_sequence=item["array_sequence"],
+            array_start=item["a_start"],
+            templates=templates_by_name,
+        )
 
-                rows = handle_edge_repeat(
-                    rows=rows,
-                    sequence_vector=sequence_substring,
-                    sequence_vector_start=adjust_start,
-                    template_sequence=templates_by_name.get(arr["class"], ""),
-                )
-                if len(rows) < 3:
-                    continue
+        rows = handle_edge_repeat(
+            rows=rows,
+            sequence_vector=item["sequence_substring"],
+            sequence_vector_start=item["adjust_start"],
+            template_sequence=templates_by_name.get(arr["class"], ""),
+        )
+        if len(rows) < 3:
+            return []
 
-                for r in rows:
-                    repeats_rows.append({k: r[k] for k in (*REPEATS_COLUMNS, "representative")})
+        cols = (*REPEATS_COLUMNS, "representative")
+        return [{k: r[k] for k in cols} for r in rows]
+
+    n_threads = _resolve_thread_count(getattr(args, "threads", 0))
+    if work_items:
+        log.detail(f"mapping {len(work_items):,} array work-items across {n_threads} thread{'s' if n_threads != 1 else ''}")
+
+    repeats_rows: list[dict] = []
+    if n_threads <= 1 or len(work_items) <= 1:
+        for item in work_items:
+            repeats_rows.extend(_process_array(item))
+    else:
+        with ThreadPoolExecutor(max_workers=n_threads) as ex:
+            for produced in ex.map(_process_array, work_items):
+                repeats_rows.extend(produced)
 
     log.detail(
         f"{len(repeats_rows):,} repeats found across {len(classarrays)} arrays"

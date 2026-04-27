@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import threading
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 
 
@@ -18,6 +20,7 @@ class _ToolStat:
 
 
 _EXTERNAL: dict[str, _ToolStat] = {}
+_EXTERNAL_LOCK = threading.Lock()
 
 
 def configure(*, quiet: bool = False) -> None:
@@ -28,28 +31,42 @@ def configure(*, quiet: bool = False) -> None:
     _EXTERNAL.clear()
 
 
-def run_external(tool: str, *args, **kwargs) -> subprocess.CompletedProcess:
-    """Wrap `subprocess.run` and record per-tool wall-time + call count.
+@contextmanager
+def time_external(tool: str):
+    """Record wall-time + call count for one invocation of an external tool.
 
     Emits a one-time `running {tool}...` line on the first call since the
-    last summary, so the user knows we've entered that subprocess phase.
+    last summary, so the user knows we've entered that phase. Thread-safe:
+    the dict mutation and counter updates are guarded so worker threads
+    can record concurrent calls.
     """
-    stat = _EXTERNAL.setdefault(tool, _ToolStat())
-    if stat.count == 0:
+    with _EXTERNAL_LOCK:
+        stat = _EXTERNAL.setdefault(tool, _ToolStat())
+        first = stat.count == 0
+    if first:
         detail(f"running {tool}...")
     t0 = time.monotonic()
     try:
-        return subprocess.run(*args, **kwargs)
+        yield
     finally:
-        stat.count += 1
-        stat.total += time.monotonic() - t0
+        elapsed = time.monotonic() - t0
+        with _EXTERNAL_LOCK:
+            stat.count += 1
+            stat.total += elapsed
+
+
+def run_external(tool: str, *args, **kwargs) -> subprocess.CompletedProcess:
+    """Wrap `subprocess.run` with `time_external` accounting."""
+    with time_external(tool):
+        return subprocess.run(*args, **kwargs)
 
 
 def tool_summary(tool: str) -> None:
     """Emit a detail line summarising calls/time recorded for `tool` since the
     previous call, then clear the counter. No-op if no calls were recorded
     since the last summary."""
-    stat = _EXTERNAL.pop(tool, None)
+    with _EXTERNAL_LOCK:
+        stat = _EXTERNAL.pop(tool, None)
     if stat is None or stat.count == 0:
         return
     plural = "" if stat.count == 1 else "s"
