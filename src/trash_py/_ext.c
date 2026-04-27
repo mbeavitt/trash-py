@@ -2,6 +2,7 @@
 #include <Python.h>
 
 #include <limits.h>
+#include <math.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -420,6 +421,171 @@ static PyObject *seq_win_score_int_impl(PyObject *self, PyObject *args) {
     return PyFloat_FromDouble(100.0 * (double)singletons / (double)total);
 }
 
+typedef struct {
+    const char *name;
+    Py_ssize_t name_len;
+    long count;
+    Py_ssize_t orig_idx;
+} CollapseEntry;
+
+static int collapse_entry_cmp(const void *a, const void *b) {
+    const CollapseEntry *ea = (const CollapseEntry *)a;
+    const CollapseEntry *eb = (const CollapseEntry *)b;
+    if (ea->count != eb->count) return ea->count < eb->count ? -1 : 1;
+    Py_ssize_t min_len = ea->name_len < eb->name_len ? ea->name_len : eb->name_len;
+    int c = memcmp(ea->name, eb->name, (size_t)min_len);
+    if (c != 0) return c;
+    if (ea->name_len != eb->name_len) return ea->name_len < eb->name_len ? -1 : 1;
+    return 0;
+}
+
+static PyObject *collapse_kmers_impl(PyObject *self, PyObject *args) {
+    PyObject *names_obj;
+    PyObject *counts_obj;
+    int max_edit;
+
+    if (!PyArg_ParseTuple(args, "OOi", &names_obj, &counts_obj, &max_edit)) {
+        return NULL;
+    }
+    if (max_edit < 0) {
+        PyErr_SetString(PyExc_ValueError, "max_edit must be non-negative");
+        return NULL;
+    }
+
+    PyObject *names_seq = PySequence_Fast(names_obj, "names must be a sequence");
+    if (!names_seq) return NULL;
+    PyObject *counts_seq = PySequence_Fast(counts_obj, "counts must be a sequence");
+    if (!counts_seq) {
+        Py_DECREF(names_seq);
+        return NULL;
+    }
+
+    Py_ssize_t n = PySequence_Fast_GET_SIZE(names_seq);
+    if (n != PySequence_Fast_GET_SIZE(counts_seq)) {
+        Py_DECREF(names_seq);
+        Py_DECREF(counts_seq);
+        PyErr_SetString(PyExc_ValueError, "names and counts must have the same length");
+        return NULL;
+    }
+
+    if (n == 0) {
+        Py_DECREF(names_seq);
+        Py_DECREF(counts_seq);
+        return PyList_New(0);
+    }
+
+    PyObject **name_items = PySequence_Fast_ITEMS(names_seq);
+    PyObject **count_items = PySequence_Fast_ITEMS(counts_seq);
+
+    CollapseEntry *entries = PyMem_Malloc((size_t)n * sizeof(*entries));
+    if (!entries) {
+        Py_DECREF(names_seq);
+        Py_DECREF(counts_seq);
+        PyErr_NoMemory();
+        return NULL;
+    }
+
+    for (Py_ssize_t i = 0; i < n; i++) {
+        Py_ssize_t name_len;
+        const char *s = PyUnicode_AsUTF8AndSize(name_items[i], &name_len);
+        if (!s) {
+            PyMem_Free(entries);
+            Py_DECREF(names_seq);
+            Py_DECREF(counts_seq);
+            return NULL;
+        }
+        long c = PyLong_AsLong(count_items[i]);
+        if (c == -1 && PyErr_Occurred()) {
+            PyMem_Free(entries);
+            Py_DECREF(names_seq);
+            Py_DECREF(counts_seq);
+            return NULL;
+        }
+        entries[i].name = s;
+        entries[i].name_len = name_len;
+        entries[i].count = c;
+        entries[i].orig_idx = i;
+    }
+
+    qsort(entries, (size_t)n, sizeof(*entries), collapse_entry_cmp);
+
+    char *consumed = PyMem_Calloc((size_t)n, sizeof(*consumed));
+    PyObject *result = PyList_New(0);
+    if (!consumed || !result) {
+        PyMem_Free(entries);
+        PyMem_Free(consumed);
+        Py_XDECREF(result);
+        Py_DECREF(names_seq);
+        Py_DECREF(counts_seq);
+        if (!PyErr_Occurred()) PyErr_NoMemory();
+        return NULL;
+    }
+
+    for (Py_ssize_t i = 0; i < n; i++) {
+        if (consumed[i]) continue;
+        consumed[i] = 1;
+        long cluster_count = entries[i].count;
+        const char *anchor = entries[i].name;
+        Py_ssize_t anchor_len = entries[i].name_len;
+
+        PyObject *cluster_names = PyList_New(0);
+        if (!cluster_names) goto error;
+        if (PyList_Append(cluster_names, name_items[entries[i].orig_idx]) < 0) {
+            Py_DECREF(cluster_names);
+            goto error;
+        }
+
+        for (Py_ssize_t j = i + 1; j < n; j++) {
+            if (consumed[j]) continue;
+            if (entries[j].name_len != anchor_len) continue;
+            const char *b = entries[j].name;
+            int d = 0;
+            int ok = 1;
+            for (Py_ssize_t k = 0; k < anchor_len; k++) {
+                if (anchor[k] != b[k]) {
+                    if (++d > max_edit) { ok = 0; break; }
+                }
+            }
+            if (!ok) continue;
+            consumed[j] = 1;
+            cluster_count += entries[j].count;
+            if (PyList_Append(cluster_names, name_items[entries[j].orig_idx]) < 0) {
+                Py_DECREF(cluster_names);
+                goto error;
+            }
+        }
+
+        PyObject *count_obj = PyLong_FromLong(cluster_count);
+        if (!count_obj) {
+            Py_DECREF(cluster_names);
+            goto error;
+        }
+        PyObject *tuple = PyTuple_Pack(2, cluster_names, count_obj);
+        Py_DECREF(cluster_names);
+        Py_DECREF(count_obj);
+        if (!tuple) goto error;
+        if (PyList_Append(result, tuple) < 0) {
+            Py_DECREF(tuple);
+            goto error;
+        }
+        Py_DECREF(tuple);
+    }
+
+    PyMem_Free(entries);
+    PyMem_Free(consumed);
+    Py_DECREF(names_seq);
+    Py_DECREF(counts_seq);
+    return result;
+
+error:
+    PyMem_Free(entries);
+    PyMem_Free(consumed);
+    Py_DECREF(result);
+    Py_DECREF(names_seq);
+    Py_DECREF(counts_seq);
+    return NULL;
+}
+
 // primary function to be passed up to Python
 static PyObject *window_compare_scores(PyObject *self, PyObject *args) {
     PyObject *sequence_obj;
@@ -551,6 +717,12 @@ static PyMethodDef module_methods[] = {
         seq_win_score_int_impl,
         METH_VARARGS,
         PyDoc_STR("Score a window by the proportion of singleton kmers.")
+    },
+    {
+        "collapse_kmers",
+        collapse_kmers_impl,
+        METH_VARARGS,
+        PyDoc_STR("Greedy Hamming-distance clustering of kmer names.")
     },
     {NULL, NULL, 0, NULL},
 };

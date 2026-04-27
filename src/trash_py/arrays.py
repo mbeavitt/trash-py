@@ -20,7 +20,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ._ext import window_compare_scores
+from ._ext import collapse_kmers as _collapse_kmers, window_compare_scores
 from .window_score import seq_win_score_int
 
 
@@ -251,47 +251,6 @@ def chunk_b_collapse_kmers(
             locations=locations,
         ))
     return result
-
-
-def _collapse_kmers(names: list[str], counts: list[int], max_edit: int) -> list[tuple[list[str], int]]:
-    """Greedy cluster by Hamming distance ≤ max_edit on same-length kmers.
-
-    Anchors are chosen in ascending-count order; ties broken alphabetically.
-    """
-    pairs = sorted(zip(names, counts), key=lambda p: (p[1], p[0]))
-    names = [p[0] for p in pairs]
-    counts = [p[1] for p in pairs]
-
-    clusters: list[tuple[list[str], int]] = []
-    i = 0
-    while i < len(names):
-        cluster_names = [names[i]]
-        cluster_count = counts[i]
-        if i + 1 < len(names):
-            anchor = names[i]
-            to_merge = [j for j in range(i + 1, len(names))
-                        if _hamming_le(anchor, names[j], max_edit)]
-            for j in to_merge:
-                cluster_count += counts[j]
-                cluster_names.append(names[j])
-            for j in reversed(to_merge):
-                del names[j]
-                del counts[j]
-        clusters.append((cluster_names, cluster_count))
-        i += 1
-    return clusters
-
-
-def _hamming_le(a: str, b: str, k: int) -> bool:
-    if len(a) != len(b):
-        return False
-    d = 0
-    for x, y in zip(a, b):
-        if x != y:
-            d += 1
-            if d > k:
-                return False
-    return True
 
 
 def chunk_c_top_n(
