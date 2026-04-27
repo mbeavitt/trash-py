@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+// FNV-1a hash function
 static uint64_t fnv1a(const char *p, Py_ssize_t n) {
     uint64_t h = 14695981039346656037ULL;
     for (Py_ssize_t i = 0; i < n; i++) {
@@ -336,6 +337,7 @@ static PyObject *run_sliding_suffix_ids(
     return scores;
 }
 
+// primary function to be passed up to Python
 static PyObject *window_compare_scores(PyObject *self, PyObject *args) {
     PyObject *sequence_obj;
     int kmer;
