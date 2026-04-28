@@ -16,6 +16,9 @@ The upstream MIT license is reproduced in
 [`LICENSES/TRASH-UPSTREAM-MIT.txt`](LICENSES/TRASH-UPSTREAM-MIT.txt) to
 satisfy its notice-preservation clause.
 
+## What's different?
+
+
 ## Installation
 
 ### Dependencies
@@ -32,6 +35,22 @@ pip install .
 ```
 
 ## Usage
+
+```
+trash-py -f input.fasta -o output_dir
+```
+
+Currently the CLI aims to mirror the one in the original TRASH tool as closely
+as possible.
+
+The exceptions are that -q is now available to silence logs, and
+currently -p for multiprocessing is not supported. This may be implemented in
+future - currently however, it's recommended to split input .fasta files and
+parallelise by chromosome/sequence using an external tool like GNU Parallel, and
+merge later.
+
+## Benchmarks
+
 
 ## How to cite
 
