@@ -4,7 +4,7 @@ from trash_py import arrays
 from trash_py.arrays import ArrayBreaks, ArrayRow, CollapsedKmer
 
 
-def test_split_and_check_arrays_reuses_consensus_score(monkeypatch) -> None:
+def test_split_and_check_arrays_reuses_chunk_d_score(monkeypatch) -> None:
     calls = {"seq_win_score_int": 0}
 
     def fake_seq_win_score_int(*args, **kwargs):
@@ -13,16 +13,16 @@ def test_split_and_check_arrays_reuses_consensus_score(monkeypatch) -> None:
 
     monkeypatch.setattr(
         arrays,
-        "find_array_breaks",
+        "chunk_a_split_arrays",
         lambda *args, **kwargs: [ArrayBreaks(start=3, end=12, seqID="seq", numID=9)],
     )
     monkeypatch.setattr(
         arrays,
-        "collapse_array_kmers",
+        "chunk_b_collapse_kmers",
         lambda *args, **kwargs: [CollapsedKmer(kmers=["a"], count=1, locations=[3, 9], distances=[])],
     )
-    monkeypatch.setattr(arrays, "find_top_repeat_distances", lambda *args, **kwargs: (7, "N_7_Count_1.", [7]))
-    monkeypatch.setattr(arrays, "build_consensus_repeat", lambda *args, **kwargs: (12.5, 7, "rep"))
+    monkeypatch.setattr(arrays, "chunk_c_top_n", lambda *args, **kwargs: (7, "N_7_Count_1.", [7]))
+    monkeypatch.setattr(arrays, "chunk_d_consensus", lambda *args, **kwargs: (12.5, 7, "rep"))
     monkeypatch.setattr(arrays, "seq_win_score_int", fake_seq_win_score_int)
 
     rows = arrays.split_and_check_arrays(
@@ -56,15 +56,15 @@ def test_split_and_check_arrays_falls_back_to_local_score_when_needed(monkeypatc
 
     monkeypatch.setattr(
         arrays,
-        "find_array_breaks",
+        "chunk_a_split_arrays",
         lambda *args, **kwargs: [ArrayBreaks(start=1, end=10, seqID="seq", numID=2)],
     )
     monkeypatch.setattr(
         arrays,
-        "collapse_array_kmers",
+        "chunk_b_collapse_kmers",
         lambda *args, **kwargs: [CollapsedKmer(kmers=["a"], count=1, locations=[1, 5], distances=[])],
     )
-    monkeypatch.setattr(arrays, "find_top_repeat_distances", lambda *args, **kwargs: (0, "", []))
+    monkeypatch.setattr(arrays, "chunk_c_top_n", lambda *args, **kwargs: (0, "", []))
     monkeypatch.setattr(arrays, "seq_win_score_int", fake_seq_win_score_int)
 
     rows = arrays.split_and_check_arrays(

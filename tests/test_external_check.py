@@ -37,4 +37,5 @@ def test_run_pipeline_exits_when_tools_missing(monkeypatch, tmp_path: Path, caps
 
     err = capsys.readouterr().err
     assert "clustalo" in err
+    assert "nhmmer" in err
     assert "conda install" in err

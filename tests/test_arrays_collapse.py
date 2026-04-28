@@ -3,10 +3,10 @@ from __future__ import annotations
 import random
 from collections import Counter
 
-from trash_py.arrays import ArrayBreaks, CollapsedKmer, _collapse_kmers, collapse_array_kmers
+from trash_py.arrays import ArrayBreaks, CollapsedKmer, _collapse_kmers, chunk_b_collapse_kmers
 
 
-def _collapse_kmers_reference(
+def _chunk_b_reference(
     sequence: str,
     array: ArrayBreaks,
     max_repeat: int,
@@ -62,7 +62,7 @@ def _snapshot(collapsed: list[CollapsedKmer]) -> list[tuple[list[str], int, list
     ]
 
 
-def test_collapse_array_kmers_matches_reference_randomized() -> None:
+def test_chunk_b_matches_reference_randomized() -> None:
     rng = random.Random(0)
     alphabet = "ACGTNn"
 
@@ -72,7 +72,7 @@ def test_collapse_array_kmers_matches_reference_randomized() -> None:
         end = rng.randint(max(start + 20, 40), len(sequence))
         array = ArrayBreaks(start=start, end=end, seqID="seq", numID=1)
 
-        got = collapse_array_kmers(sequence, array, max_repeat=1000, min_repeat=7, kmer=10)
-        expected = _collapse_kmers_reference(sequence, array, max_repeat=1000, min_repeat=7, kmer=10)
+        got = chunk_b_collapse_kmers(sequence, array, max_repeat=1000, min_repeat=7, kmer=10)
+        expected = _chunk_b_reference(sequence, array, max_repeat=1000, min_repeat=7, kmer=10)
 
         assert _snapshot(got) == _snapshot(expected)

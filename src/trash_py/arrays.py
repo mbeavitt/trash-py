@@ -1,13 +1,14 @@
 """Identify individual repeat arrays inside a repetitive region.
 
-`split_and_check_arrays` is the public entry point. It runs four steps:
+`split_and_check_arrays` is the public entry point. Internally it
+runs four chunks that mirror the upstream R source:
 
-* `find_array_breaks` — detect array-break positions.
-* `collapse_array_kmers` — per-array kmer counting, filtering, and
+* `chunk_a_split_arrays` — detect array-break positions.
+* `chunk_b_collapse_kmers` — per-array kmer counting, filtering, and
   Levenshtein-based clustering.
-* `find_top_repeat_distances` — distance analysis yielding `top_N` and the
+* `chunk_c_top_n` — distance analysis yielding `top_N` and the
   comma-joined `top_5_N` string.
-* `build_consensus_repeat` — MSA + majority-base consensus to produce the
+* `chunk_d_consensus` — MSA + majority-base consensus to produce the
   array representative and finalise `top_N`.
 """
 from __future__ import annotations
@@ -58,7 +59,7 @@ class CollapsedKmer:
     distances: list[int] = field(default_factory=list)
 
 
-def find_array_breaks(
+def chunk_a_split_arrays(
     sequence: str,
     seqID: str,
     numID: int,
@@ -193,7 +194,7 @@ def _window_comparison_scores(
     )
 
 
-def collapse_array_kmers(
+def chunk_b_collapse_kmers(
     sequence: str,
     array: ArrayBreaks,
     max_repeat: int,
@@ -252,7 +253,7 @@ def collapse_array_kmers(
     return result
 
 
-def find_top_repeat_distances(
+def chunk_c_top_n(
     collapsed: list[CollapsedKmer],
     array: ArrayBreaks,
     max_repeat: int,
@@ -377,7 +378,7 @@ def _first_matching_window(point: int, window_starts: list[int], window_ends: li
     return -1
 
 
-def build_consensus_repeat(
+def chunk_d_consensus(
     sequence: str,
     collapsed: list[CollapsedKmer],
     top_N_distances: list[int],
@@ -493,16 +494,16 @@ def split_and_check_arrays(
     window-relative coordinates from chunks A-D are shifted back to
     fasta-absolute before returning.
     """
-    arrays = find_array_breaks(sequence, seqID, numID, max_repeat, kmer)
+    arrays = chunk_a_split_arrays(sequence, seqID, numID, max_repeat, kmer)
     rows: list[ArrayRow] = []
     for arr in arrays:
-        collapsed = collapse_array_kmers(sequence, arr, max_repeat, min_repeat, kmer)
+        collapsed = chunk_b_collapse_kmers(sequence, arr, max_repeat, min_repeat, kmer)
         score: float | None = None
         top_N, top_5_N, representative = 0, "", ""
         if collapsed:
-            _, top_5_N, top_N_distances = find_top_repeat_distances(collapsed, arr, max_repeat, min_repeat)
+            _, top_5_N, top_N_distances = chunk_c_top_n(collapsed, arr, max_repeat, min_repeat)
             if top_N_distances:
-                score, top_N, representative = build_consensus_repeat(
+                score, top_N, representative = chunk_d_consensus(
                     sequence, collapsed, top_N_distances, arr, clustalo_exe=clustalo_exe,
                 )
         if score is None:
