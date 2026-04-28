@@ -4,7 +4,7 @@ Tandem-repeat array identifier — a Python port of the TRASH program written in
 
 ## Origin and acknowledgements
 
-trash-py is a Python re-implementation of the TRASH R package by
+trash-py is a Python re-implementation of the TRASH program written by
 Piotr Włodzimierz (<pwlodzimierz@ibb.waw.pl>, Institute of Biochemistry
 and Biophysics, Polish Academy of Sciences). The upstream repository lives
 at <https://github.com/vlothec/TRASH_2>. All algorithmic credit for the
