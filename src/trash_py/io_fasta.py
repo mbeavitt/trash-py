@@ -1,6 +1,7 @@
 """Port of `src/in_out/read_fasta_and_list.R`."""
 from __future__ import annotations
 
+import gzip
 from pathlib import Path
 
 
@@ -10,12 +11,14 @@ def read_fasta_and_list(path: Path) -> list[tuple[str, str]]:
     Matches `ape::read.dna(..., as.character=TRUE, as.matrix=FALSE)`:
     sequences are lowercased; headers are split on whitespace and only
     the first token is kept. Dashes and ambiguity codes are preserved
-    as-is.
+    as-is. Gzipped inputs (`.gz` suffix) are decompressed transparently.
     """
+    path = Path(path)
+    opener = gzip.open if path.suffix == ".gz" else open
     records: list[tuple[str, str]] = []
     name: str | None = None
     chunks: list[str] = []
-    with Path(path).open() as f:
+    with opener(path, "rt") as f:
         for line in f:
             line = line.rstrip("\r\n")
             if line.startswith(">"):

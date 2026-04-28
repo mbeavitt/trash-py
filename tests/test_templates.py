@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-TEMPLATES = REPO_ROOT / "testing_fastas" / "test_templates.fasta"
+TEMPLATES = REPO_ROOT / "tests" / "data" / "test_templates.fasta"
 
 
 def _run(fasta: Path, out: Path, templates: Path | None = None) -> subprocess.CompletedProcess:
@@ -26,7 +26,7 @@ def _classes(csv_path: Path) -> set[str]:
 
 @pytest.fixture(scope="module")
 def small_fasta() -> Path:
-    return REPO_ROOT / "testing_fastas" / "ath_Chr1_extraction_trc.fasta"
+    return REPO_ROOT / "tests" / "data" / "ath_Chr1_extraction_trc.fasta"
 
 
 def test_pipeline_accepts_templates_flag(small_fasta: Path, tmp_path: Path) -> None:
