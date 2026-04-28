@@ -1,6 +1,6 @@
 # trash-py
 
-Tandem-repeat array identifier — a Python port of the TRASH R package.
+Tandem-repeat array identifier — a Python port of the TRASH program written in R.
 
 ## Origin and acknowledgements
 
