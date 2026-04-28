@@ -28,6 +28,9 @@ Currently, on smaller less repetitive genomes (e.g. Arabidopsis, Human genome)
 the bottleneck is nhmmer rather than the the TRASH pipeline itself, which takes
 a fraction of the original time to complete.
 
+The stderr logs have also been changed to reflect the new internals and to give
+trash-py a little of its own personality.
+
 ## Installation
 Please install [nhmmer](http://hmmer.org/) and [Clustal Omega](https://bioconda.github.io/recipes/clustalo/README.html)
 and ensure they are available on the PATH. Additionally, please ensure you have
