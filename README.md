@@ -20,8 +20,6 @@ satisfy its notice-preservation clause.
 
 
 ## Installation
-
-### Dependencies
 Please install [nhmmer](http://hmmer.org/) and [Clustal Omega](https://bioconda.github.io/recipes/clustalo/README.html)
 and ensure they are available on the PATH. Additionally, please ensure you have
 a suitable C compiler installed (gcc, clang).
