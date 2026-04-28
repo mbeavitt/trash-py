@@ -17,7 +17,16 @@ The upstream MIT license is reproduced in
 satisfy its notice-preservation clause.
 
 ## What's different?
+trash-py aims to build on the substantial work done in developing the original
+TRASH repeat annotation pipeline by adopting a more flexible (and performant)
+Python/C runner/libs framework. A library of reusable functions is exposed which
+can be incorporated into diverse repeat-annotation related workflows beyond
+simply running the TRASH pipeline, and the hotter functions have been ported to
+C to maximise performance.
 
+Currently, on smaller less repetitive genomes (e.g. Arabidopsis, Human genome)
+the bottleneck is nhmmer rather than the the TRASH pipeline itself, which takes
+a fraction of the original time to complete.
 
 ## Installation
 Please install [nhmmer](http://hmmer.org/) and [Clustal Omega](https://bioconda.github.io/recipes/clustalo/README.html)
@@ -39,10 +48,10 @@ trash-py -f input.fasta -o output_dir
 ```
 
 Currently the CLI aims to mirror the one in the original TRASH tool as closely
-as possible.
+as possible, to present a drag-and-drop replacement.
 
 The exceptions are that -q is now available to silence logs, and
-currently -p for multiprocessing is not supported. This may be implemented in
+currently __-p for multiprocessing is not supported__. This may be implemented in
 future - currently however, it's recommended to split input .fasta files and
 parallelise by chromosome/sequence using an external tool like GNU Parallel, and
 merge later.
