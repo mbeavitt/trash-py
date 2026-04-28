@@ -16,6 +16,23 @@ The upstream MIT license is reproduced in
 [`LICENSES/TRASH-UPSTREAM-MIT.txt`](LICENSES/TRASH-UPSTREAM-MIT.txt) to
 satisfy its notice-preservation clause.
 
+## Installation
+
+### Dependencies
+Please install [nhmmer](http://hmmer.org/) and [Clustal Omega](https://bioconda.github.io/recipes/clustalo/README.html)
+and ensure they are available on the PATH. Additionally, please ensure you have
+a suitable C compiler installed (gcc, clang).
+
+trash-py can then be installed by:
+
+```
+git clone https://github.com/mbeavitt/trash-py
+cd trash-py
+pip install .
+```
+
+## Usage
+
 ## How to cite
 
 If you use `trash-py` in academic work, please cite the original TRASH
