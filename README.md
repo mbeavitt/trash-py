@@ -4,8 +4,8 @@ Tandem-repeat array identifier — a Python port of the TRASH R package.
 
 ## Origin and acknowledgements
 
-`trash-py` is a Python re-implementation of the **TRASH** R package by
-**Piotr Włodzimierz** (<pwlodzimierz@ibb.waw.pl>, Institute of Biochemistry
+trash-py is a Python re-implementation of the TRASH R package by
+Piotr Włodzimierz (<pwlodzimierz@ibb.waw.pl>, Institute of Biochemistry
 and Biophysics, Polish Academy of Sciences). The upstream repository lives
 at <https://github.com/vlothec/TRASH_2>. All algorithmic credit for the
 underlying approach belongs to the original author; this port is an
@@ -19,11 +19,26 @@ satisfy its notice-preservation clause.
 ## How to cite
 
 If you use `trash-py` in academic work, please cite the original TRASH
-publication by Piotr Włodzimierz et al. — see the upstream repository for
-the current preferred citation.
+publication:
 
-<!-- TODO: paste the canonical TRASH paper citation (DOI, journal, year)
-     once confirmed against the upstream repo / publisher. -->
+Wlodzimierz, P., Hong, M., & Henderson, I. R. (2023). TRASH: tandem
+repeat annotation and structural hierarchy. *Bioinformatics*, 39(5),
+btad308.
+
+BibTeX:
+
+```bibtex
+@article{wlodzimierz2023trash,
+  title={TRASH: tandem repeat annotation and structural hierarchy},
+  author={Wlodzimierz, Piotr and Hong, Michael and Henderson, Ian R},
+  journal={Bioinformatics},
+  volume={39},
+  number={5},
+  pages={btad308},
+  year={2023},
+  publisher={Oxford University Press}
+}
+```
 
 ## License
 
