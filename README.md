@@ -33,7 +33,7 @@ trash-py a little of its own personality.
 
 ## Installation
 
-The best way to install the tool is using conda:
+The best way to install the tool is using conda/mamba/micromamba:
 
 ```
 conda install -c bioconda trash-py
