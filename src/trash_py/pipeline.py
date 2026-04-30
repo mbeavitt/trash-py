@@ -462,8 +462,7 @@ def run_pipeline(args: Any) -> None:
     log.detail(
         f"{len(repeats_rows):,} repeats found across {len(classarrays)} arrays"
     )
-    log.tool_summary("nhmmer")
-    log.tool_summary("clustalo")
+    log.tool_summary_group("nhmmer", "clustalo")
     log.elapsed_marker()
 
     # Aggregate into the final arrays table; trim the repeats table.

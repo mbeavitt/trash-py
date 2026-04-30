@@ -15,7 +15,11 @@ _T0 = time.monotonic()
 @dataclass
 class _ToolStat:
     count: int = 0
-    total: float = 0.0
+    # Wall-clock span across all calls (possibly across workers): the time
+    # the user actually waited, not summed CPU. Stored as `time.time()`
+    # values so they're comparable across processes.
+    first_start: float = float("inf")
+    last_end: float = float("-inf")
 
 
 _EXTERNAL: dict[str, _ToolStat] = {}
@@ -61,7 +65,8 @@ def merge_stats(snapshot: dict[str, _ToolStat]) -> None:
     for tool, stat in snapshot.items():
         local = _EXTERNAL.setdefault(tool, _ToolStat())
         local.count += stat.count
-        local.total += stat.total
+        local.first_start = min(local.first_start, stat.first_start)
+        local.last_end = max(local.last_end, stat.last_end)
 
 
 def run_external(tool: str, *args, **kwargs) -> subprocess.CompletedProcess:
@@ -75,24 +80,46 @@ def run_external(tool: str, *args, **kwargs) -> subprocess.CompletedProcess:
     if stat.count == 0 and not _WORKER and tool not in _ANNOUNCED:
         _ANNOUNCED.add(tool)
         detail(f"running {tool}...")
-    t0 = time.monotonic()
+    t0 = time.time()
     try:
         return subprocess.run(*args, **kwargs)
     finally:
+        t1 = time.time()
         stat.count += 1
-        stat.total += time.monotonic() - t0
+        stat.first_start = min(stat.first_start, t0)
+        stat.last_end = max(stat.last_end, t1)
 
 
 def tool_summary(tool: str) -> None:
     """Emit a detail line summarising calls/time recorded for `tool` since the
     previous call, then clear the counter. No-op if no calls were recorded
     since the last summary."""
-    stat = _EXTERNAL.pop(tool, None)
-    _ANNOUNCED.discard(tool)
-    if stat is None or stat.count == 0:
+    tool_summary_group(tool)
+
+
+def tool_summary_group(*tools: str) -> None:
+    """Combine summaries for tools dispatched together (e.g. both running
+    inside one parallel block) into a single line: per-tool call counts,
+    then one wall-clock span covering all calls of all listed tools."""
+    items: list[tuple[str, _ToolStat]] = []
+    first_start = float("inf")
+    last_end = float("-inf")
+    for tool in tools:
+        stat = _EXTERNAL.pop(tool, None)
+        _ANNOUNCED.discard(tool)
+        if stat is None or stat.count == 0:
+            continue
+        items.append((tool, stat))
+        first_start = min(first_start, stat.first_start)
+        last_end = max(last_end, stat.last_end)
+    if not items:
         return
-    plural = "" if stat.count == 1 else "s"
-    detail(f"{tool}: {stat.count:,} call{plural}, {format_elapsed(stat.total)}")
+    parts = [
+        f"{tool}: {stat.count:,} call{'' if stat.count == 1 else 's'}"
+        for tool, stat in items
+    ]
+    wall = max(0.0, last_end - first_start)
+    detail(f"{', '.join(parts)}, {format_elapsed(wall)}")
 
 
 def _emit(line: str = "") -> None:
