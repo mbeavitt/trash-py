@@ -25,11 +25,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="optional template fasta — assigns class names from headers",
     )
     p.add_argument("-q", "--quiet", action="store_true", help="suppress progress output")
+    p.add_argument(
+        "-p",
+        "--processes",
+        type=int,
+        default=1,
+        help="parallel worker processes for the array-identification and "
+        "repeat-mapping stages (default 1 = serial)",
+    )
     return p
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.processes < 1:
+        print(f"--processes must be >= 1 (got {args.processes})", file=sys.stderr)
+        return 2
     log.configure(quiet=args.quiet)
     if not args.fasta.exists():
         print(f"fasta not found: {args.fasta}", file=sys.stderr)

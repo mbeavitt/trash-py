@@ -3,12 +3,13 @@ from __future__ import annotations
 
 import shutil
 import sys
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import Any
 
 from . import _log as log
 from . import __version__
-from .arrays import split_and_check_arrays
+from .arrays import ArrayRow, split_and_check_arrays
 from .classify import classify_arrays
 from .io_csv import write_csv_r_style
 from .io_fasta import read_fasta_and_list
@@ -150,11 +151,90 @@ def _log_class_breakdown(classarrays: list[dict[str, Any]], top_n: int = 8) -> N
         )
 
 
+def _worker_init() -> None:
+    """ProcessPool worker bootstrap: silence per-worker logging and switch
+    `_log.run_external` into worker mode so the one-shot `running {tool}...`
+    line is emitted only by the parent."""
+    log.configure(quiet=True)
+    log.set_worker_mode(True)
+
+
+def _split_arrays_worker(
+    task: tuple[int, str, str, int, int, int, int],
+) -> tuple[list[ArrayRow], dict]:
+    region_start, region_seq, seqID, numID, max_repeat, min_repeat, kmer = task
+    rows = split_and_check_arrays(
+        region_start=region_start,
+        sequence=region_seq,
+        seqID=seqID,
+        numID=numID,
+        max_repeat=max_repeat,
+        min_repeat=min_repeat,
+        kmer=kmer,
+    )
+    return rows, log.pop_stats()
+
+
+def _map_array(task: tuple[dict, str, str, str, int, dict, str]) -> list[dict]:
+    (arr, seqID, array_sequence, sequence_substring,
+     adjust_start, templates_by_name, output_folder) = task
+
+    rows = map_repeats(
+        representative=arr["representative"],
+        top_N=int(arr["top_N"]),
+        array_sequence=array_sequence,
+        seqID=seqID,
+        arrayID=int(arr["array_num_ID"]),
+        start_offset=int(arr["start"]),
+        output_folder=Path(output_folder),
+    )
+    if len(rows) < 2:
+        return []
+
+    rows = clean_overlaps(
+        rows=rows,
+        representative_len=int(arr["top_N"]),
+        arr_class=arr["class"],
+    )
+    if len(rows) < 3:
+        return []
+
+    rows = rescore_repeats(
+        rows=rows,
+        arr_representative=arr["representative"],
+        arr_class=arr["class"],
+        top_N=int(arr["top_N"]),
+        array_sequence=array_sequence,
+        array_start=int(arr["start"]),
+        templates=templates_by_name,
+    )
+
+    rows = handle_edge_repeat(
+        rows=rows,
+        sequence_vector=sequence_substring,
+        sequence_vector_start=adjust_start,
+        template_sequence=templates_by_name.get(arr["class"], ""),
+    )
+    if len(rows) < 3:
+        return []
+
+    return [{k: r[k] for k in (*REPEATS_COLUMNS, "representative")} for r in rows]
+
+
+def _map_array_worker(
+    task: tuple[dict, str, str, str, int, dict, str],
+) -> tuple[list[dict], dict]:
+    out = _map_array(task)
+    return out, log.pop_stats()
+
+
 def run_pipeline(args: Any) -> None:
     """Drive the pipeline. `args` must expose `.fasta`, `.output`,
-    `.max_rep_size`, `.min_rep_size`, and (optionally) `.templates`.
+    `.max_rep_size`, `.min_rep_size`, and (optionally) `.templates`,
+    `.processes`.
     """
     _require_external_tools()
+    processes = max(1, int(getattr(args, "processes", 1) or 1))
     output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
     fasta_name = Path(args.fasta).name
@@ -219,25 +299,43 @@ def run_pipeline(args: Any) -> None:
 
     # Per-region: split into individual arrays + extract a representative.
     log.section("identifying arrays in repetitive regions")
-    arr_rows = []
+    region_tasks: list[tuple[int, str, str, int, int, int, int]] = []
     for (name, seq), seq_regions, idx in zip(
         fasta, per_seq_regions, range(1, len(fasta) + 1)
     ):
         for region in seq_regions:
             region_seq = seq[region.start - 1:region.end]
-            for arr in split_and_check_arrays(
-                region_start=region.start,
+            region_tasks.append((
+                region.start, region_seq, name, idx,
+                args.max_rep_size, args.min_rep_size, KMER,
+            ))
+
+    arr_rows: list[list] = []
+
+    def _emit_array_rows(arrs: list[ArrayRow]) -> None:
+        for arr in arrs:
+            arr_rows.append([
+                arr.start, arr.end, arr.seqID, arr.numID,
+                arr.score, arr.top_N, arr.top_5_N, arr.representative,
+            ])
+
+    if processes > 1 and region_tasks:
+        log.announce_tool("clustalo")
+        with ProcessPoolExecutor(max_workers=processes, initializer=_worker_init) as ex:
+            for arrs, stats in ex.map(_split_arrays_worker, region_tasks):
+                log.merge_stats(stats)
+                _emit_array_rows(arrs)
+    else:
+        for region_start, region_seq, name, idx, max_rep, min_rep, kmer in region_tasks:
+            _emit_array_rows(split_and_check_arrays(
+                region_start=region_start,
                 sequence=region_seq,
                 seqID=name,
                 numID=idx,
-                max_repeat=args.max_rep_size,
-                min_repeat=args.min_rep_size,
-                kmer=KMER,
-            ):
-                arr_rows.append([
-                    arr.start, arr.end, arr.seqID, arr.numID,
-                    arr.score, arr.top_N, arr.top_5_N, arr.representative,
-                ])
+                max_repeat=max_rep,
+                min_repeat=min_rep,
+                kmer=kmer,
+            ))
 
     write_csv_r_style(
         output_dir / f"{fasta_name}_aregarrays.csv",
@@ -321,6 +419,7 @@ def run_pipeline(args: Any) -> None:
     for arr in classarrays:
         by_seq.setdefault(arr["seqID"], []).append(arr)
 
+    map_tasks: list[tuple[dict, str, str, str, int, dict, str]] = []
     for seqID, arrs_in_seq in by_seq.items():
         fasta_seq = fasta_by_seqID[seqID]
         # Match upstream chunking: chunk_edges = [0, 100, 200, ..., n-1]
@@ -344,48 +443,21 @@ def run_pipeline(args: Any) -> None:
                 a_start = int(arr["start"])
                 a_end = int(arr["end"])
                 array_sequence = fasta_seq[a_start - 1:a_end]
+                map_tasks.append((
+                    arr, seqID, array_sequence, sequence_substring,
+                    adjust_start, templates_by_name, str(output_dir),
+                ))
 
-                rows = map_repeats(
-                    representative=arr["representative"],
-                    top_N=int(arr["top_N"]),
-                    array_sequence=array_sequence,
-                    seqID=seqID,
-                    arrayID=int(arr["array_num_ID"]),
-                    start_offset=a_start,
-                    output_folder=output_dir,
-                )
-                if len(rows) < 2:
-                    continue
-
-                rows = clean_overlaps(
-                    rows=rows,
-                    representative_len=int(arr["top_N"]),
-                    arr_class=arr["class"],
-                )
-                if len(rows) < 3:
-                    continue
-
-                rows = rescore_repeats(
-                    rows=rows,
-                    arr_representative=arr["representative"],
-                    arr_class=arr["class"],
-                    top_N=int(arr["top_N"]),
-                    array_sequence=array_sequence,
-                    array_start=a_start,
-                    templates=templates_by_name,
-                )
-
-                rows = handle_edge_repeat(
-                    rows=rows,
-                    sequence_vector=sequence_substring,
-                    sequence_vector_start=adjust_start,
-                    template_sequence=templates_by_name.get(arr["class"], ""),
-                )
-                if len(rows) < 3:
-                    continue
-
-                for r in rows:
-                    repeats_rows.append({k: r[k] for k in (*REPEATS_COLUMNS, "representative")})
+    if processes > 1 and map_tasks:
+        log.announce_tool("nhmmer")
+        log.announce_tool("clustalo")
+        with ProcessPoolExecutor(max_workers=processes, initializer=_worker_init) as ex:
+            for rows, stats in ex.map(_map_array_worker, map_tasks):
+                log.merge_stats(stats)
+                repeats_rows.extend(rows)
+    else:
+        for task in map_tasks:
+            repeats_rows.extend(_map_array(task))
 
     log.detail(
         f"{len(repeats_rows):,} repeats found across {len(classarrays)} arrays"

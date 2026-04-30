@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import math
 import shutil
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -88,19 +89,25 @@ def map_nhmmer(
     seqID: str,
     arrayID: int,
     start_offset: int,
-    output_folder: Path,
+    output_folder: Path | None = None,
     nhmmer_exe: str = "nhmmer",
 ) -> list[RepeatRow]:
-    """Run nhmmer against the array sequence and parse --tblout."""
-    output_folder = Path(output_folder)
-    output_folder.mkdir(parents=True, exist_ok=True)
-    rep_file = output_folder / f"Array_{arrayID}_repeat.fasta"
-    seq_file = output_folder / f"Array_{arrayID}_sequence.fasta"
-    tbl_file = output_folder / f"nhmmer_{arrayID}_output.txt"
+    """Run nhmmer against the array sequence and parse --tblout.
 
-    rep_file.write_text(_fasta_bytes("reference_repeat", representative))
-    seq_file.write_text(_fasta_bytes(seqID, array_sequence))
-    try:
+    `output_folder` is accepted for API compatibility; nhmmer's scratch
+    files now live in a per-call `tempfile.TemporaryDirectory()` so that
+    boundary arrays (which the pipeline chunking processes twice) and
+    concurrent workers cannot race on a shared `Array_{id}_*.fasta` path.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        rep_file = tmp_path / f"Array_{arrayID}_repeat.fasta"
+        seq_file = tmp_path / f"Array_{arrayID}_sequence.fasta"
+        tbl_file = tmp_path / f"nhmmer_{arrayID}_output.txt"
+
+        rep_file.write_text(_fasta_bytes("reference_repeat", representative))
+        seq_file.write_text(_fasta_bytes(seqID, array_sequence))
+
         log.run_external(
             "nhmmer",
             [nhmmer_exe, *NHMMER_ARGS, "--tblout", str(tbl_file), str(rep_file), str(seq_file)],
@@ -108,10 +115,6 @@ def map_nhmmer(
             check=True,
         )
         rows = _parse_nhmmer_tblout(tbl_file, seqID, arrayID)
-    finally:
-        for p in (rep_file, seq_file, tbl_file):
-            if p.exists():
-                p.unlink()
 
     for r in rows:
         r["start"] += start_offset - 1
