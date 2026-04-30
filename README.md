@@ -51,13 +51,8 @@ trash-py -f input.fasta -o output_dir
 ```
 
 Currently the CLI aims to mirror the one in the original TRASH tool as closely
-as possible, to present a drag-and-drop replacement.
-
-The exceptions are that -q is now available to silence logs, and
-currently __-p for multiprocessing is not supported__. This may be implemented in
-future - currently however, it's recommended to split input .fasta files and
-parallelise by chromosome/sequence using an external tool like GNU Parallel, and
-merge later.
+as possible, to present a drag-and-drop replacement. The only difference is you
+can now supply the -q flag to silence logs.
 
 ## Benchmarks
 
