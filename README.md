@@ -32,9 +32,19 @@ The stderr logs have also been changed to reflect the new internals and to give
 trash-py a little of its own personality.
 
 ## Installation
-Please install [nhmmer](http://hmmer.org/) and [Clustal Omega](https://bioconda.github.io/recipes/clustalo/README.html)
+### conda
+
+The best way to install the tool is using conda/mamba/micromamba:
+
+```
+conda install -c bioconda trash-py
+```
+### source
+If instead you'd like to build/install from source, please install [nhmmer](http://hmmer.org/) and 
+[Clustal Omega](https://bioconda.github.io/recipes/clustalo/README.html)
 and ensure they are available on the PATH. Additionally, please ensure you have
-a suitable C compiler installed (gcc, clang).
+a suitable C compiler installed (gcc, clang) for the C extensions. 
+There is no need to separately compile these, python should recognise the instructions for compilation in setup.py.
 
 trash-py can then be installed by:
 
