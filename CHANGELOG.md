@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `-V` / `--version` flag — prints the installed version and exits.
+
 ## [1.1.0] - 2026-05-21
 
 ### Added
@@ -17,8 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- The `--version` / startup log header now reports the correct version.
-  Previously `__version__` was pinned at `0.1.0` regardless of release.
+- The startup log header now reports the correct version. Previously
+  `__version__` was pinned at `0.1.0` regardless of release.
 
 [1.1.0]: https://github.com/mbeavitt/trash-py/releases/tag/v1.1.0
 

@@ -100,13 +100,14 @@ BibTeX:
 
 ```
 $ trash-py --help
-usage: trash-py [-h] -f FASTA -o OUTPUT [-m MAX_REP_SIZE] [-i MIN_REP_SIZE]
-                [-t TEMPLATES] [-q] [-p PROCESSES]
+usage: trash-py [-h] [-V] -f FASTA -o OUTPUT [-m MAX_REP_SIZE]
+                [-i MIN_REP_SIZE] [-t TEMPLATES] [-q] [-p PROCESSES]
 
 TRASH — tandem-repeat array identifier (Python)
 
 options:
   -h, --help            show this help message and exit
+  -V, --version         show program's version number and exit
   -f, --fasta FASTA     input fasta
   -o, --output OUTPUT   output directory
   -m, --max-rep-size MAX_REP_SIZE

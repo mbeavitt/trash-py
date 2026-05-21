@@ -5,6 +5,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from . import __version__
 from . import _log as log
 from .pipeline import run_pipeline
 
@@ -12,6 +13,9 @@ from .pipeline import run_pipeline
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="trash-py", description="TRASH — tandem-repeat array identifier (Python)"
+    )
+    p.add_argument(
+        "-V", "--version", action="version", version=f"trash-py {__version__}"
     )
     p.add_argument("-f", "--fasta", required=True, type=Path, help="input fasta")
     p.add_argument("-o", "--output", required=True, type=Path, help="output directory")
