@@ -61,8 +61,9 @@ trash-py -f input.fasta -o output_dir
 ```
 
 Currently the CLI aims to mirror the one in the original TRASH tool as closely
-as possible, to present a drag-and-drop replacement. The only difference is you
-can now supply the -q flag to silence logs.
+as possible, to present a drag-and-drop replacement. trash-py adds two options
+over upstream: `-q` to silence logs, and `-p` to run the array-identification
+and repeat-mapping stages across multiple worker processes.
 
 ## Benchmarks
 
@@ -94,3 +95,27 @@ BibTeX:
 ## License
 
 `trash-py` is released under the MIT License — see [`LICENSE`](LICENSE).
+
+## Command-line reference
+
+```
+$ trash-py --help
+usage: trash-py [-h] -f FASTA -o OUTPUT [-m MAX_REP_SIZE] [-i MIN_REP_SIZE]
+                [-t TEMPLATES] [-q] [-p PROCESSES]
+
+TRASH — tandem-repeat array identifier (Python)
+
+options:
+  -h, --help            show this help message and exit
+  -f, --fasta FASTA     input fasta
+  -o, --output OUTPUT   output directory
+  -m, --max-rep-size MAX_REP_SIZE
+  -i, --min-rep-size MIN_REP_SIZE
+  -t, --templates TEMPLATES
+                        optional template fasta — assigns class names from
+                        headers
+  -q, --quiet           suppress progress output
+  -p, --processes PROCESSES
+                        parallel worker processes for the array-identification
+                        and repeat-mapping stages (default 1 = serial)
+```
