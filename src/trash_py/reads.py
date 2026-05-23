@@ -223,6 +223,17 @@ def annotate_sequences(
     templates_by_name: dict[str, str] = dict(templates or [])
     window_size = round((max_rep_size + KMER) * 1.1)
 
+    too_short = [(n, len(s)) for n, s in sequences if len(s) < window_size]
+    if too_short:
+        shortest = sorted(too_short, key=lambda x: x[1])[:5]
+        raise ValueError(
+            f"{len(too_short)} input sequence(s) are shorter than the "
+            f"{window_size} bp minimum required for window scoring "
+            f"(window_size = round((max_rep_size + {KMER}) * 1.1)). "
+            f"Lower max_rep_size or remove sequences below {window_size} bp. "
+            f"Shortest: " + ", ".join(f"{n} ({l} bp)" for n, l in shortest)
+        )
+
     # ── 1. Window scoring ──────────────────────────────────────────────────
     all_scores = [
         sequence_window_score(seq, window_size, KMER) for _, seq in sequences

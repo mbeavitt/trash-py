@@ -12,17 +12,17 @@ from trash_py.reads import (
 )
 
 
-# ── dataclass smoke tests (no external tools needed) ─────────────────────────
+# ── dataclass smoke tests ─────────────────────────────────────────────────────
 
 def test_repeat_unit_fields():
-    u = RepeatUnit(start=1, end=178, width=178, strand="+", array_id=1,
-                   class_="178_1", score=45.2)
+    u = RepeatUnit(start=1, end=177, width=177, strand="+", array_id=1,
+                   class_="177_1", score=45.2)
     assert u.end - u.start + 1 == u.width
 
 
 def test_repeat_array_fields():
-    a = RepeatArray(start=1, end=534, class_="178_1", n_repeats=3,
-                    median_width=178, representative="ACGT", array_id=1)
+    a = RepeatArray(start=1, end=531, class_="177_1", n_repeats=3,
+                    median_width=177, representative="ACGT", array_id=1)
     assert a.n_repeats == 3
 
 
@@ -32,19 +32,28 @@ def test_sequence_annotation_defaults():
     assert ann.repeats == []
 
 
-# ── public API: short sequence returns empty annotation ──────────────────────
+# ── length guard ──────────────────────────────────────────────────────────────
 
-def test_annotate_no_repeats(monkeypatch):
-    """A non-repetitive sequence should return an empty annotation without
-    calling any external tools (clustalo/nhmmer absent on CI is fine).
-    We monkeypatch _require_external_tools so the test is self-contained.
-    """
-    import trash_py.reads as reads_mod
+def test_annotate_sequences_raises_on_short_input():
+    """Sequences shorter than window_size must raise ValueError with a clear
+    message rather than crashing inside window scoring."""
+    short_seq = "ACGT" * 10  # 40 bp — well below the ~286 bp minimum
+    with pytest.raises(ValueError, match="shorter than the"):
+        annotate_sequences([("short", short_seq)])
 
-    monkeypatch.setattr(reads_mod, "_require_external_tools", lambda: None)
 
-    # 600 bp random-ish, non-repetitive sequence — passes window scoring
-    seq = ("ACGTTTGCAA" * 30 + "TTGCAACGTA" * 30)  # 600 bp, no tandem structure
+def test_annotate_raises_on_short_input():
+    short_seq = "ACGT" * 10
+    with pytest.raises(ValueError, match="shorter than the"):
+        annotate(short_seq, name="short")
+
+
+# ── public API: non-repetitive sequence returns empty annotation ──────────────
+
+def test_annotate_no_repeats():
+    """A long non-repetitive sequence should return an empty annotation."""
+    # 600 bp, no tandem structure — passes window scoring
+    seq = "ACGTTTGCAA" * 30 + "TTGCAACGTA" * 30
     result = annotate(seq, name="nonrep")
     assert isinstance(result, SequenceAnnotation)
     assert result.name == "nonrep"
@@ -53,12 +62,7 @@ def test_annotate_no_repeats(monkeypatch):
     assert result.repeats == []
 
 
-def test_annotate_sequences_preserves_order(monkeypatch):
-    import trash_py.reads as reads_mod
-
-    monkeypatch.setattr(reads_mod, "_require_external_tools", lambda: None)
-
-    # 600 bp each, no tandem structure
+def test_annotate_sequences_preserves_order():
     seqs = [
         ("a", "ACGT" * 150),
         ("b", "TTGC" * 150),
@@ -69,11 +73,7 @@ def test_annotate_sequences_preserves_order(monkeypatch):
     assert all(r.length == 600 for r in results)
 
 
-def test_annotate_sequences_deduplicates_names(monkeypatch):
-    import trash_py.reads as reads_mod
-
-    monkeypatch.setattr(reads_mod, "_require_external_tools", lambda: None)
-
+def test_annotate_sequences_deduplicates_names():
     seqs = [("dup", "ACGT" * 150), ("dup", "TTGC" * 150)]
     results = annotate_sequences(seqs)
     assert len(results) == 2
@@ -90,3 +90,7 @@ def test_package_exports():
     assert hasattr(trash_py, "SequenceAnnotation")
     assert hasattr(trash_py, "RepeatArray")
     assert hasattr(trash_py, "RepeatUnit")
+    assert hasattr(trash_py, "ARABIDOPSIS_CEN178")
+    name, seq = trash_py.ARABIDOPSIS_CEN178
+    assert name == "CEN178"
+    assert len(seq) == 177
