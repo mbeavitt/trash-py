@@ -6,7 +6,7 @@ than files, making it straightforward to embed repeat annotation in larger
 Python workflows — for example, annotating individual insertion sequences
 extracted from long-read alignments.
 
-Example::
+Example — basic usage::
 
     from trash_py.reads import annotate
 
@@ -16,6 +16,14 @@ Example::
 
     for arr in result.arrays:
         print(arr.n_repeats, "×", arr.class_, "at", arr.start, "-", arr.end)
+
+Example — with a reference template for consistent canonical orientation
+(important when comparing breakpoint positions across many reads)::
+
+    from trash_py.reads import annotate
+    from trash_py.templates import ARABIDOPSIS_CEN178
+
+    result = annotate(read_seq, name="read1", templates=[ARABIDOPSIS_CEN178])
 """
 from __future__ import annotations
 

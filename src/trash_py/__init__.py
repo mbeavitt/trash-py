@@ -15,6 +15,7 @@ from .reads import (  # noqa: E402
     annotate,
     annotate_sequences,
 )
+from .templates import ARABIDOPSIS_CEN178  # noqa: E402
 
 __all__ = [
     "annotate",
@@ -22,4 +23,5 @@ __all__ = [
     "RepeatArray",
     "RepeatUnit",
     "SequenceAnnotation",
+    "ARABIDOPSIS_CEN178",
 ]
