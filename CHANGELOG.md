@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-05-25
+
+### Added
+
+- **Programmatic annotation API.** New `trash_py.reads` module exposes
+  `annotate()` and `annotate_sequences()` — thin wrappers around the
+  pipeline that accept in-memory sequence strings and return typed
+  dataclasses (`RepeatUnit`, `RepeatArray`, `SequenceAnnotation`)
+  instead of writing CSV files. Useful for annotating individual long
+  reads or insertion sequences inside larger Python workflows without
+  going through temporary FASTA files. Input sequences shorter than
+  `window_size` are rejected up front with a clear `ValueError`.
+- **Built-in organism templates.** New `trash_py.templates` module
+  ships `ARABIDOPSIS_CEN178`, the 177 bp Arabidopsis CEN178
+  centromeric satellite consensus. Passing a template to `annotate()`
+  anchors the repeat units to a fixed canonical rotation so breakpoint
+  positions are directly comparable across reads.
+- Top-level package now re-exports `annotate`, `annotate_sequences`,
+  `RepeatUnit`, `RepeatArray`, `SequenceAnnotation`, and
+  `ARABIDOPSIS_CEN178` for ergonomic imports.
+
+[1.2.0]: https://github.com/mbeavitt/trash-py/releases/tag/v1.2.0
+
 ## [1.1.1] - 2026-05-21
 
 ### Added
