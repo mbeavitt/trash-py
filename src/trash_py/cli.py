@@ -30,6 +30,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("-q", "--quiet", action="store_true", help="suppress progress output")
     p.add_argument(
+        "--fast",
+        action="store_true",
+        help="use edlib for repeat mapping instead of nhmmer (no nhmmer dependency, ~2× faster)",
+    )
+    p.add_argument(
         "-p",
         "--processes",
         type=int,

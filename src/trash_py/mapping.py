@@ -174,6 +174,68 @@ def map_default(
     return rows
 
 
+def map_edlib(
+    representative: str,
+    array_sequence: str,
+    seqID: str,
+    arrayID: int,
+    start_offset: int,
+    max_edit_frac: float = 0.35,
+) -> list[RepeatRow]:
+    """Edit-distance-based repeat mapper using edlib, replaces nhmmer.
+
+    Iteratively finds non-overlapping occurrences of `representative`
+    (and its reverse complement) in `array_sequence` using edlib HW
+    (infix) alignment.  Coordinates are 1-based inclusive genomic
+    positions, consistent with map_nhmmer and map_default.
+    """
+    import edlib as _edlib
+
+    rep_len = len(representative)
+    if rep_len == 0 or len(array_sequence) < rep_len // 2:
+        return []
+
+    max_ed = max(1, round(rep_len * max_edit_frac))
+    rows: list[RepeatRow] = []
+
+    # Window large enough to hold one complete unit with all edits being
+    # insertions, but not large enough to contain a second complete unit.
+    # This forces edlib to find the leftmost unit rather than jumping to a
+    # more-similar unit further along the array.
+    window_size = rep_len + max_ed
+    step_no_hit = max(1, rep_len // 4)
+
+    for query, strand in [
+        (representative, "+"),
+        (rev_comp_string(representative), "-"),
+    ]:
+        pos = 0
+        while len(array_sequence) - pos >= rep_len // 2:
+            result = _edlib.align(
+                query,
+                array_sequence[pos:pos + window_size],
+                mode="HW",
+                task="locations",
+                k=max_ed,
+            )
+            if result["editDistance"] == -1 or not result["locations"]:
+                pos += step_no_hit
+                continue
+            best_start, best_end = result["locations"][0]
+            rows.append({
+                "seqID": seqID,
+                "arrayID": arrayID,
+                "start": pos + best_start + start_offset,
+                "end": pos + best_end + start_offset,
+                "strand": strand,
+                "score": 0.0,
+                "eval": -1.0,
+            })
+            pos += best_end + 1
+
+    return rows
+
+
 def map_repeats(
     representative: str,
     top_N: int,
@@ -184,14 +246,21 @@ def map_repeats(
     output_folder: Path | None = None,
     nhmmer_exe: str | None = None,
 ) -> list[RepeatRow]:
-    """Dispatch to nhmmer or default matcher based on `top_N`."""
+    """Dispatch to the appropriate repeat mapper based on `top_N`.
+
+    nhmmer path (explicit nhmmer_exe): uses nhmmer for top_N ≥ 14.
+    edlib path (default): uses edlib for top_N ≥ 50; map_default otherwise.
+      Short repeats (top_N < 50) use Hamming-only scanning because edlib's
+      edit-distance threshold at these lengths is too permissive relative to
+      the expected number of random matches.
+    """
     if top_N >= 14:
-        if output_folder is None:
-            raise ValueError("output_folder required for nhmmer path")
-        return map_nhmmer(
-            representative, array_sequence, seqID, arrayID, start_offset,
-            output_folder, nhmmer_exe or shutil.which("nhmmer") or "nhmmer",
-        )
+        if nhmmer_exe is not None:
+            if output_folder is None:
+                raise ValueError("output_folder required for nhmmer path")
+            return map_nhmmer(representative, array_sequence, seqID, arrayID,
+                              start_offset, output_folder, nhmmer_exe)
+        return map_edlib(representative, array_sequence, seqID, arrayID, start_offset)
     return map_default(representative, array_sequence, seqID, arrayID, start_offset)
 
 

@@ -42,12 +42,15 @@ ARRAYS_PER_CHUNK = 100
 KMER = 10
 
 
-# External programs the pipeline shells out to. Both must be on PATH.
+# External programs the pipeline shells out to.
 # Install via bioconda (works on macOS, Linux, Windows-WSL):
 #     conda install -c bioconda clustalo hmmer
 _EXTERNAL_TOOLS: dict[str, str] = {
     "clustalo": "Clustal Omega — `conda install -c bioconda clustalo`",
     "nhmmer": "HMMER (provides nhmmer) — `conda install -c bioconda hmmer`",
+}
+_FAST_EXTERNAL_TOOLS: dict[str, str] = {
+    "clustalo": "Clustal Omega — `conda install -c bioconda clustalo`",
 }
 
 
@@ -56,8 +59,9 @@ def check_external_tools(tools: dict[str, str] = _EXTERNAL_TOOLS) -> list[str]:
     return [name for name in tools if shutil.which(name) is None]
 
 
-def _require_external_tools() -> None:
-    missing = check_external_tools()
+def _require_external_tools(fast: bool = False) -> None:
+    tools = _FAST_EXTERNAL_TOOLS if fast else _EXTERNAL_TOOLS
+    missing = check_external_tools(tools)
     if not missing:
         return
     lines = [
@@ -66,7 +70,7 @@ def _require_external_tools() -> None:
     ]
     for name in missing:
         lines.append(f"  - {name}: not found")
-        lines.append(f"      install: {_EXTERNAL_TOOLS[name]}")
+        lines.append(f"      install: {tools[name]}")
     print("\n".join(lines), file=sys.stderr)
     raise SystemExit(2)
 
@@ -175,9 +179,9 @@ def _split_arrays_worker(
     return rows, log.pop_stats()
 
 
-def _map_array(task: tuple[dict, str, str, str, int, dict, str]) -> list[dict]:
+def _map_array(task: tuple[dict, str, str, str, int, dict, str, str | None]) -> list[dict]:
     (arr, seqID, array_sequence, sequence_substring,
-     adjust_start, templates_by_name, output_folder) = task
+     adjust_start, templates_by_name, output_folder, nhmmer_exe) = task
 
     rows = map_repeats(
         representative=arr["representative"],
@@ -187,6 +191,7 @@ def _map_array(task: tuple[dict, str, str, str, int, dict, str]) -> list[dict]:
         arrayID=int(arr["array_num_ID"]),
         start_offset=int(arr["start"]),
         output_folder=Path(output_folder),
+        nhmmer_exe=nhmmer_exe,
     )
     if len(rows) < 2:
         return []
@@ -222,7 +227,7 @@ def _map_array(task: tuple[dict, str, str, str, int, dict, str]) -> list[dict]:
 
 
 def _map_array_worker(
-    task: tuple[dict, str, str, str, int, dict, str],
+    task: tuple[dict, str, str, str, int, dict, str, str | None],
 ) -> tuple[list[dict], dict]:
     out = _map_array(task)
     return out, log.pop_stats()
@@ -233,7 +238,9 @@ def run_pipeline(args: Any) -> None:
     `.max_rep_size`, `.min_rep_size`, and (optionally) `.templates`,
     `.processes`.
     """
-    _require_external_tools()
+    fast = bool(getattr(args, "fast", False))
+    _require_external_tools(fast=fast)
+    nhmmer_exe = None if fast else (shutil.which("nhmmer") or "nhmmer")
     processes = max(1, int(getattr(args, "processes", 1) or 1))
     output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -445,11 +452,12 @@ def run_pipeline(args: Any) -> None:
                 array_sequence = fasta_seq[a_start - 1:a_end]
                 map_tasks.append((
                     arr, seqID, array_sequence, sequence_substring,
-                    adjust_start, templates_by_name, str(output_dir),
+                    adjust_start, templates_by_name, str(output_dir), nhmmer_exe,
                 ))
 
     if processes > 1 and map_tasks:
-        log.announce_tool("nhmmer")
+        if not fast:
+            log.announce_tool("nhmmer")
         log.announce_tool("clustalo")
         with ProcessPoolExecutor(max_workers=processes, initializer=_worker_init) as ex:
             for rows, stats in ex.map(_map_array_worker, map_tasks):
@@ -462,7 +470,10 @@ def run_pipeline(args: Any) -> None:
     log.detail(
         f"{len(repeats_rows):,} repeats found across {len(classarrays)} arrays"
     )
-    log.tool_summary_group("nhmmer", "clustalo")
+    if fast:
+        log.tool_summary("clustalo")
+    else:
+        log.tool_summary_group("nhmmer", "clustalo")
     log.elapsed_marker()
 
     # Aggregate into the final arrays table; trim the repeats table.
