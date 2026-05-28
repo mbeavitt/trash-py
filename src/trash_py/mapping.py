@@ -6,8 +6,9 @@ Pipeline (per array):
   (top_N ≥ 14), else an exact-length Hamming-tolerant scan.
 * `clean_overlaps` — drop overlapping hits and fill obvious tandem gaps.
 * `rescore_repeats` — recompute the representative via clustal
-  alignment, fill remaining gaps, rescore each repeat, and merge
-  adjacent split repeats.
+  alignment (default) or an edlib-seeded consensus (``--fast``),
+  fill remaining gaps, rescore each repeat, and merge adjacent
+  split repeats.
 * `handle_edge_repeat` — tweak array-edge boundaries to maximise
   alignment with the representative.
 """
@@ -22,7 +23,7 @@ from typing import Any
 from rapidfuzz.distance import Levenshtein
 
 from . import _log as log
-from .arrays import _clustalo_align, _consensus_N
+from .arrays import _clustalo_align, _consensus_N, _consensus_custom
 from .sequence import rev_comp_string
 
 
@@ -509,9 +510,14 @@ def rescore_repeats(
     array_start: int,
     templates: dict[str, str] | None = None,
     clustalo_exe: str = "clustalo",
+    fast: bool = False,
 ) -> list[RepeatRow]:
     """Ports main.R:401-473: recalculate representative via MSA, fill
     gaps, adist-rescore, then merge adjacent high-score short pairs.
+
+    The MSA step uses clustalo by default; pass ``fast=True`` to use
+    the in-process edlib-seeded consensus instead (see
+    ``arrays._consensus_custom``).
     """
     max_repeats_to_align = 15
     min_repeats_to_recalculate = 10
@@ -537,8 +543,11 @@ def rescore_repeats(
             rev_comp_string(s) if st == "-" else s
             for s, st in zip(sample_seqs, strands)
         ]
-        alignment = _clustalo_align(sample_seqs, clustalo_exe)
-        consensus = _consensus_N(alignment, top_N)
+        if fast:
+            consensus = _consensus_custom(sample_seqs, top_N, seed=arr_representative)
+        else:
+            alignment = _clustalo_align(sample_seqs, clustalo_exe)
+            consensus = _consensus_N(alignment, top_N)
         if consensus:
             for r in table:
                 r["representative"] = consensus

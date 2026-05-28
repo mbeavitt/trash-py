@@ -32,7 +32,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--fast",
         action="store_true",
-        help="use edlib for repeat mapping instead of nhmmer (no nhmmer dependency, ~2× faster)",
+        help="use edlib for both repeat mapping and consensus, dropping the nhmmer + clustalo dependencies",
     )
     p.add_argument(
         "-p",

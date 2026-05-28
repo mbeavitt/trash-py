@@ -367,6 +367,7 @@ def chunk_d_consensus(
     top_N_distances: list[int],
     array: ArrayBreaks,
     clustalo_exe: str = "clustalo",
+    fast: bool = False,
 ) -> tuple[float, int, str]:
     """Return `(score, top_N_final, representative)`."""
     max_repeats_to_align = 10
@@ -409,7 +410,9 @@ def chunk_d_consensus(
         top_kmer_list = [top_kmer_list[i] for i in indices]
 
     if len(top_kmer_list) == 1:
-        consensus = top_kmer_list[0]
+        consensus = top_kmer_list[0].lower()
+    elif fast:
+        consensus = _consensus_custom(top_kmer_list, top_N)
     else:
         alignment = _clustalo_align(top_kmer_list, clustalo_exe)
         consensus = _consensus_N(alignment, top_N)
@@ -460,6 +463,118 @@ def _clustalo_align(sequences: list[str], clustalo_exe: str) -> list[str]:
     return [s.lower() for s in aligned]
 
 
+def _nw_project_to_seed(query: str, seed: str) -> str:
+    """Edlib NW-align `query` to `seed` and return a string of length
+    `len(seed)` where each character is the query base aligned to the
+    corresponding seed column, or ``-`` where the query has a deletion
+    relative to the seed. Insertions in the query relative to the seed
+    are dropped (the seed defines the alignment columns).
+    """
+    import edlib
+
+    L = len(seed)
+    if not query:
+        return "-" * L
+    if query == seed:
+        return query
+    result = edlib.align(query, seed, mode="NW", task="path")
+    cigar = result.get("cigar", "") or ""
+    chars: list[str] = []
+    q_pos = 0
+    i = 0
+    n_cigar = len(cigar)
+    while i < n_cigar:
+        j = i
+        while j < n_cigar and cigar[j].isdigit():
+            j += 1
+        if j == i or j >= n_cigar:
+            break
+        run = int(cigar[i:j])
+        op = cigar[j]
+        i = j + 1
+        if op in ("M", "=", "X"):
+            chars.extend(query[q_pos:q_pos + run])
+            q_pos += run
+        elif op == "I":
+            q_pos += run
+        elif op == "D":
+            chars.extend("-" * run)
+        else:
+            break
+    if len(chars) < L:
+        chars.extend("-" * (L - len(chars)))
+    elif len(chars) > L:
+        chars = chars[:L]
+    return "".join(chars)
+
+
+def _consensus_custom(sequences: list[str], N: int, seed: str | None = None) -> str:
+    """Drop-in replacement for the previous `_clustalo_align` +
+    `_consensus_N` pair, used when ``--fast`` is set.
+
+    Three paths depending on input shape:
+
+    * **Equal-length, no seed:** column-wise tally directly on the
+      inputs. No alignment needed since all sequences are already
+      column-aligned by construction (stage 1 with a single
+      `top_N_distances` value, stage 2 with `map_default`).
+    * **Variable-length, no seed:** project each input onto a
+      median-length seed via edlib NW, then column-tally. The median
+      seed avoids using an indel-containing outlier as the anchor.
+    * **`seed` given:** project each input onto the supplied seed
+      (typically the array's current representative) via edlib NW,
+      then column-tally. Used by stage 2 `rescore_repeats` to keep
+      the alignment grid tied to the existing representative.
+
+    Insertions in queries relative to the seed are dropped (a
+    seed-only insertion column would have occupancy 1 and be excluded
+    by `_consensus_N` anyway). Deletions become gaps. Both paths feed
+    the same `_consensus_N` top-N column selection + majority base
+    vote.
+
+    Why not always NW-project? For equal-length inputs edlib NW can
+    pick a shift alignment (e.g. ``1I 6= 1D``) over a diagonal one
+    when both have the same edit cost, effectively replacing the
+    query's first base with the seed's. That throws off the column
+    tally on short repeats where every base matters (e.g. 7-bp
+    satellites where a single SNP is 14 % of the consensus length).
+    """
+    if not sequences or N <= 0:
+        return ""
+    seqs = [s.lower() for s in sequences]
+    if seed is None:
+        L_min = min(len(s) for s in seqs)
+        L_max = max(len(s) for s in seqs)
+        if L_min == L_max:
+            return _consensus_N(seqs, N)
+        seed_lc = _pick_median_length_seed(seqs)
+    else:
+        seed_lc = seed.lower()
+        L_seed = len(seed_lc)
+        if all(len(s) == L_seed for s in seqs):
+            return _consensus_N(seqs, N)
+    alignment = [_nw_project_to_seed(s, seed_lc) for s in seqs]
+    return _consensus_N(alignment, N)
+
+
+def _pick_median_length_seed(sequences: list[str]) -> str:
+    """Return the input sequence whose length is closest to the median,
+    breaking ties on input order (lowest index wins). Inputs must be
+    non-empty.
+    """
+    lengths = sorted(len(s) for s in sequences)
+    n = len(lengths)
+    median = lengths[n // 2] if n % 2 else (lengths[n // 2 - 1] + lengths[n // 2]) / 2
+    best_idx = 0
+    best_diff = abs(len(sequences[0]) - median)
+    for i in range(1, len(sequences)):
+        diff = abs(len(sequences[i]) - median)
+        if diff < best_diff:
+            best_idx = i
+            best_diff = diff
+    return sequences[best_idx]
+
+
 def split_and_check_arrays(
     region_start: int,
     sequence: str,
@@ -469,6 +584,7 @@ def split_and_check_arrays(
     min_repeat: int = 7,
     kmer: int = 10,
     clustalo_exe: str = "clustalo",
+    fast: bool = False,
 ) -> list[ArrayRow]:
     """One call = one repetitive region → one or more arrays, each with
     all columns of the final `_aregarrays.csv` row populated.
@@ -487,7 +603,8 @@ def split_and_check_arrays(
             _, top_5_N, top_N_distances = chunk_c_top_n(collapsed, arr, max_repeat, min_repeat)
             if top_N_distances:
                 score, top_N, representative = chunk_d_consensus(
-                    sequence, collapsed, top_N_distances, arr, clustalo_exe=clustalo_exe,
+                    sequence, collapsed, top_N_distances, arr,
+                    clustalo_exe=clustalo_exe, fast=fast,
                 )
         if score is None:
             sub = sequence[arr.start - 1:arr.end]
