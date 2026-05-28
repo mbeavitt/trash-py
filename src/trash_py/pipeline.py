@@ -49,9 +49,7 @@ _EXTERNAL_TOOLS: dict[str, str] = {
     "clustalo": "Clustal Omega — `conda install -c bioconda clustalo`",
     "nhmmer": "HMMER (provides nhmmer) — `conda install -c bioconda hmmer`",
 }
-_FAST_EXTERNAL_TOOLS: dict[str, str] = {
-    "clustalo": "Clustal Omega — `conda install -c bioconda clustalo`",
-}
+_FAST_EXTERNAL_TOOLS: dict[str, str] = {}
 
 
 def check_external_tools(tools: dict[str, str] = _EXTERNAL_TOOLS) -> list[str]:
@@ -164,9 +162,9 @@ def _worker_init() -> None:
 
 
 def _split_arrays_worker(
-    task: tuple[int, str, str, int, int, int, int],
+    task: tuple[int, str, str, int, int, int, int, bool],
 ) -> tuple[list[ArrayRow], dict]:
-    region_start, region_seq, seqID, numID, max_repeat, min_repeat, kmer = task
+    region_start, region_seq, seqID, numID, max_repeat, min_repeat, kmer, fast = task
     rows = split_and_check_arrays(
         region_start=region_start,
         sequence=region_seq,
@@ -175,13 +173,14 @@ def _split_arrays_worker(
         max_repeat=max_repeat,
         min_repeat=min_repeat,
         kmer=kmer,
+        fast=fast,
     )
     return rows, log.pop_stats()
 
 
-def _map_array(task: tuple[dict, str, str, str, int, dict, str, str | None]) -> list[dict]:
+def _map_array(task: tuple[dict, str, str, str, int, dict, str, str | None, bool]) -> list[dict]:
     (arr, seqID, array_sequence, sequence_substring,
-     adjust_start, templates_by_name, output_folder, nhmmer_exe) = task
+     adjust_start, templates_by_name, output_folder, nhmmer_exe, fast) = task
 
     rows = map_repeats(
         representative=arr["representative"],
@@ -212,6 +211,7 @@ def _map_array(task: tuple[dict, str, str, str, int, dict, str, str | None]) -> 
         array_sequence=array_sequence,
         array_start=int(arr["start"]),
         templates=templates_by_name,
+        fast=fast,
     )
 
     rows = handle_edge_repeat(
@@ -227,7 +227,7 @@ def _map_array(task: tuple[dict, str, str, str, int, dict, str, str | None]) -> 
 
 
 def _map_array_worker(
-    task: tuple[dict, str, str, str, int, dict, str, str | None],
+    task: tuple[dict, str, str, str, int, dict, str, str | None, bool],
 ) -> tuple[list[dict], dict]:
     out = _map_array(task)
     return out, log.pop_stats()
@@ -306,7 +306,7 @@ def run_pipeline(args: Any) -> None:
 
     # Per-region: split into individual arrays + extract a representative.
     log.section("identifying arrays in repetitive regions")
-    region_tasks: list[tuple[int, str, str, int, int, int, int]] = []
+    region_tasks: list[tuple[int, str, str, int, int, int, int, bool]] = []
     for (name, seq), seq_regions, idx in zip(
         fasta, per_seq_regions, range(1, len(fasta) + 1)
     ):
@@ -314,7 +314,7 @@ def run_pipeline(args: Any) -> None:
             region_seq = seq[region.start - 1:region.end]
             region_tasks.append((
                 region.start, region_seq, name, idx,
-                args.max_rep_size, args.min_rep_size, KMER,
+                args.max_rep_size, args.min_rep_size, KMER, fast,
             ))
 
     arr_rows: list[list] = []
@@ -327,13 +327,14 @@ def run_pipeline(args: Any) -> None:
             ])
 
     if processes > 1 and region_tasks:
-        log.announce_tool("clustalo")
+        if not fast:
+            log.announce_tool("clustalo")
         with ProcessPoolExecutor(max_workers=processes, initializer=_worker_init) as ex:
             for arrs, stats in ex.map(_split_arrays_worker, region_tasks):
                 log.merge_stats(stats)
                 _emit_array_rows(arrs)
     else:
-        for region_start, region_seq, name, idx, max_rep, min_rep, kmer in region_tasks:
+        for region_start, region_seq, name, idx, max_rep, min_rep, kmer, region_fast in region_tasks:
             _emit_array_rows(split_and_check_arrays(
                 region_start=region_start,
                 sequence=region_seq,
@@ -342,6 +343,7 @@ def run_pipeline(args: Any) -> None:
                 max_repeat=max_rep,
                 min_repeat=min_rep,
                 kmer=kmer,
+                fast=region_fast,
             ))
 
     write_csv_r_style(
@@ -352,7 +354,8 @@ def run_pipeline(args: Any) -> None:
 
     arr_plural = "s" if len(arr_rows) != 1 else ""
     log.detail(f"{len(arr_rows)} candidate array{arr_plural}")
-    log.tool_summary("clustalo")
+    if not fast:
+        log.tool_summary("clustalo")
     log.elapsed_marker()
 
     # Canonicalise each representative; if a templates fasta was supplied,
@@ -426,7 +429,7 @@ def run_pipeline(args: Any) -> None:
     for arr in classarrays:
         by_seq.setdefault(arr["seqID"], []).append(arr)
 
-    map_tasks: list[tuple[dict, str, str, str, int, dict, str]] = []
+    map_tasks: list[tuple[dict, str, str, str, int, dict, str, str | None, bool]] = []
     for seqID, arrs_in_seq in by_seq.items():
         fasta_seq = fasta_by_seqID[seqID]
         # Match upstream chunking: chunk_edges = [0, 100, 200, ..., n-1]
@@ -453,12 +456,13 @@ def run_pipeline(args: Any) -> None:
                 map_tasks.append((
                     arr, seqID, array_sequence, sequence_substring,
                     adjust_start, templates_by_name, str(output_dir), nhmmer_exe,
+                    fast,
                 ))
 
     if processes > 1 and map_tasks:
         if not fast:
             log.announce_tool("nhmmer")
-        log.announce_tool("clustalo")
+            log.announce_tool("clustalo")
         with ProcessPoolExecutor(max_workers=processes, initializer=_worker_init) as ex:
             for rows, stats in ex.map(_map_array_worker, map_tasks):
                 log.merge_stats(stats)
@@ -470,9 +474,7 @@ def run_pipeline(args: Any) -> None:
     log.detail(
         f"{len(repeats_rows):,} repeats found across {len(classarrays)} arrays"
     )
-    if fast:
-        log.tool_summary("clustalo")
-    else:
+    if not fast:
         log.tool_summary_group("nhmmer", "clustalo")
     log.elapsed_marker()
 
