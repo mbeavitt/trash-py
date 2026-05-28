@@ -8,6 +8,7 @@ representative in its class.
 from __future__ import annotations
 
 import math
+from bisect import bisect_left
 from collections import Counter
 from typing import Any
 
@@ -184,15 +185,26 @@ def compare_kmer_grep(
     extended_rv = rev * copies
     kmers_rv = [extended_rv[j:j + kmer] for j in range(n_kmers)]
 
-    def first_match(pattern: str, kmers: list[str], start_idx: int) -> int:
-        """1-based index of first equal kmer in kmers[start_idx:], or 0."""
-        for j in range(start_idx, len(kmers)):
-            if kmers[j] == pattern:
-                return j - start_idx + 1
-        return 0
+    positions_fw: dict[str, list[int]] = {}
+    for j, km in enumerate(kmers_fw):
+        positions_fw.setdefault(km, []).append(j)
+    positions_rv: dict[str, list[int]] = {}
+    for j, km in enumerate(kmers_rv):
+        positions_rv.setdefault(km, []).append(j)
 
-    distances_fw = [first_match(sequence_kmers[i], kmers_fw, i) for i in range(len(sequence_kmers))]
-    distances_rv = [first_match(sequence_kmers[i], kmers_rv, i) for i in range(len(sequence_kmers))]
+    def first_match(pattern: str, positions: dict[str, list[int]], start_idx: int) -> int:
+        """1-based offset to the first occurrence of `pattern` at or after
+        `start_idx` in the indexed kmer stream, or 0 if none."""
+        bucket = positions.get(pattern)
+        if not bucket:
+            return 0
+        idx = bisect_left(bucket, start_idx)
+        if idx >= len(bucket):
+            return 0
+        return bucket[idx] - start_idx + 1
+
+    distances_fw = [first_match(sequence_kmers[i], positions_fw, i) for i in range(len(sequence_kmers))]
+    distances_rv = [first_match(sequence_kmers[i], positions_rv, i) for i in range(len(sequence_kmers))]
 
     if sum(distances_fw) + sum(distances_rv) == 0:
         return sequence_to_realign
