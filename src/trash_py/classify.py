@@ -11,6 +11,7 @@ import math
 from collections import Counter
 from typing import Any
 
+from ._ext import coverage_count as _coverage_count
 from .sequence import rev_comp_string
 
 
@@ -25,16 +26,6 @@ def _circular_kmers(sequence: str, k: int) -> list[str]:
     repeats_needed = -(-(n + k) // n)
     extended = sequence * repeats_needed
     return [extended[i:i + k] for i in range(n)]
-
-
-def _coverage_count(source: list[str], target_set: set[str]) -> int:
-    """Count kmers in `source` that appear anywhere in `target_set`.
-
-    Mirrors R `sum(source %in% target)` — elements at each source position
-    are checked against the target membership, so duplicates in source count
-    each occurrence.
-    """
-    return sum(1 for km in source if km in target_set)
 
 
 def _argmax_first(values: list[float]) -> int:
@@ -82,6 +73,8 @@ def classify_repeats(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         rep = r["representative"]
         kmers_fw.append(_circular_kmers(rep, KMER_CLASSIFY))
         kmers_rv.append(_circular_kmers(rev_comp_string(rep), KMER_CLASSIFY))
+    sets_fw: list[set[str]] = [set(k) for k in kmers_fw]
+    sets_rv: list[set[str]] = [set(k) for k in kmers_rv]
 
     names_iterator = 1
     while any(c == "" for c in class_vec):
@@ -111,8 +104,8 @@ def classify_repeats(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
         # scores_fw/rv ask "how many of top's fw kmers appear in candidate's
         # fw (or rv) kmers?" — the comparison direction is top→candidate.
-        scores_fw = [_coverage_count(top_fw_list, set(kmers_fw[j])) for j in which_to_compare]
-        scores_rv = [_coverage_count(top_fw_list, set(kmers_rv[j])) for j in which_to_compare]
+        scores_fw = [_coverage_count(top_fw_list, sets_fw[j]) for j in which_to_compare]
+        scores_rv = [_coverage_count(top_fw_list, sets_rv[j]) for j in which_to_compare]
 
         distances = [1 - s / top_len for s in scores_fw]
         distances_rv = [1 - s / top_len for s in scores_rv]

@@ -704,6 +704,40 @@ static PyObject *shift_scores_impl(PyObject *self, PyObject *args) {
     return result;
 }
 
+// Count how many elements of `source` (a sequence) appear in `target_set`
+// (a set or frozenset). Duplicates in source count each occurrence.
+static PyObject *coverage_count(PyObject *self, PyObject *args) {
+    PyObject *source_obj;
+    PyObject *target_set;
+
+    if (!PyArg_ParseTuple(args, "OO", &source_obj, &target_set)) {
+        return NULL;
+    }
+    if (!PyAnySet_Check(target_set)) {
+        PyErr_SetString(PyExc_TypeError, "target_set must be a set or frozenset");
+        return NULL;
+    }
+
+    PyObject *source_seq = PySequence_Fast(source_obj, "source must be a sequence");
+    if (!source_seq) return NULL;
+
+    Py_ssize_t n = PySequence_Fast_GET_SIZE(source_seq);
+    PyObject **items = PySequence_Fast_ITEMS(source_seq);
+
+    long count = 0;
+    for (Py_ssize_t i = 0; i < n; i++) {
+        int r = PySet_Contains(target_set, items[i]);
+        if (r < 0) {
+            Py_DECREF(source_seq);
+            return NULL;
+        }
+        if (r) count++;
+    }
+
+    Py_DECREF(source_seq);
+    return PyLong_FromLong(count);
+}
+
 // Per-cluster inner loop from chunk_c_top_n: filter consecutive-location pairs
 // by distance and assign each kept pair to a window via bisect on window_ends.
 // Returns (filtered_starts, filtered_distances, window_indices), where
@@ -975,6 +1009,12 @@ static PyMethodDef module_methods[] = {
         map_cluster_locations,
         METH_VARARGS,
         PyDoc_STR("Filter consecutive cluster locations by distance and assign each kept pair to a window.")
+    },
+    {
+        "coverage_count",
+        coverage_count,
+        METH_VARARGS,
+        PyDoc_STR("Count source-sequence elements that are members of target_set (a set/frozenset).")
     },
     {NULL, NULL, 0, NULL},
 };
