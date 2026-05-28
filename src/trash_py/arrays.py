@@ -14,13 +14,16 @@ runs four chunks that mirror the upstream R source:
 from __future__ import annotations
 
 import tempfile
-from bisect import bisect_left
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import _log as log
-from ._ext import collapse_kmers as _collapse_kmers, window_compare_scores
+from ._ext import (
+    collapse_kmers as _collapse_kmers,
+    map_cluster_locations as _map_cluster_locations,
+    window_compare_scores,
+)
 from .window_score import seq_win_score_int
 
 
@@ -293,32 +296,19 @@ def chunk_c_top_n(
             cluster.distances = []
             continue
 
-        filtered_starts: list[int] = []
-        filtered_distances: list[int] = []
-        prev = locs[0]
-        for curr in locs[1:]:
-            distance = curr - prev
-            if min_repeat <= distance <= max_repeat:
-                filtered_starts.append(prev)
-                filtered_distances.append(distance)
+        filtered_starts, filtered_distances, window_indices = _map_cluster_locations(
+            locs, window_starts, window_ends, min_repeat, max_repeat
+        )
 
-                first_window = _first_matching_window(prev, window_starts, window_ends)
-                second_window = _first_matching_window(prev + distance, window_starts, window_ends)
-                if first_window == -1:
-                    window_idx = second_window
-                elif second_window == -1 or first_window < second_window:
-                    window_idx = first_window
-                else:
-                    window_idx = second_window
-
-                if window_idx != -1:
-                    counts = window_distance_counts[window_idx]
-                    if counts is None:
-                        counts = {}
-                        window_distance_counts[window_idx] = counts
-                    counts[distance] = counts.get(distance, 0) + 1
-                    window_distance_totals[window_idx] += 1
-            prev = curr
+        for distance, window_idx in zip(filtered_distances, window_indices):
+            if window_idx == -1:
+                continue
+            counts = window_distance_counts[window_idx]
+            if counts is None:
+                counts = {}
+                window_distance_counts[window_idx] = counts
+            counts[distance] = counts.get(distance, 0) + 1
+            window_distance_totals[window_idx] += 1
 
         cluster.locations = filtered_starts
         cluster.distances = filtered_distances
@@ -369,13 +359,6 @@ def chunk_c_top_n(
     top_n = int(sum(top_n_distances) / len(top_n_distances))  # floor mean (positive values)
 
     return top_n, top_5_n, top_n_distances
-
-
-def _first_matching_window(point: int, window_starts: list[int], window_ends: list[int]) -> int:
-    idx = bisect_left(window_ends, point)
-    if idx < len(window_starts) and window_starts[idx] <= point:
-        return idx
-    return -1
 
 
 def chunk_d_consensus(

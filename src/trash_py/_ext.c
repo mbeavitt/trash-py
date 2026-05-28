@@ -704,6 +704,128 @@ static PyObject *shift_scores_impl(PyObject *self, PyObject *args) {
     return result;
 }
 
+// Per-cluster inner loop from chunk_c_top_n: filter consecutive-location pairs
+// by distance and assign each kept pair to a window via bisect on window_ends.
+// Returns (filtered_starts, filtered_distances, window_indices), where
+// window_indices[k] == -1 means no window contained either endpoint.
+static PyObject *map_cluster_locations(PyObject *self, PyObject *args) {
+    PyObject *locs_obj;
+    PyObject *ws_obj;
+    PyObject *we_obj;
+    int min_repeat;
+    int max_repeat;
+
+    if (!PyArg_ParseTuple(args, "OOOii", &locs_obj, &ws_obj, &we_obj, &min_repeat, &max_repeat)) {
+        return NULL;
+    }
+
+    int32_t *locs = NULL;
+    int32_t *ws = NULL;
+    int32_t *we = NULL;
+    Py_ssize_t n_locs = 0;
+    Py_ssize_t n_ws = 0;
+    Py_ssize_t n_we = 0;
+
+    if (!parse_int_sequence(locs_obj, &locs, &n_locs, "locations") ||
+        !parse_int_sequence(ws_obj, &ws, &n_ws, "window_starts") ||
+        !parse_int_sequence(we_obj, &we, &n_we, "window_ends")) {
+        PyMem_Free(locs);
+        PyMem_Free(ws);
+        PyMem_Free(we);
+        return NULL;
+    }
+
+    if (n_ws != n_we) {
+        PyMem_Free(locs);
+        PyMem_Free(ws);
+        PyMem_Free(we);
+        PyErr_SetString(PyExc_ValueError, "window_starts and window_ends must have the same length");
+        return NULL;
+    }
+
+    PyObject *filt_starts = PyList_New(0);
+    PyObject *filt_distances = PyList_New(0);
+    PyObject *win_indices = PyList_New(0);
+    if (!filt_starts || !filt_distances || !win_indices) {
+        Py_XDECREF(filt_starts);
+        Py_XDECREF(filt_distances);
+        Py_XDECREF(win_indices);
+        PyMem_Free(locs);
+        PyMem_Free(ws);
+        PyMem_Free(we);
+        return NULL;
+    }
+
+    for (Py_ssize_t i = 1; i < n_locs; i++) {
+        int32_t prev = locs[i - 1];
+        int32_t curr = locs[i];
+        int32_t distance = curr - prev;
+        if (distance < min_repeat || distance > max_repeat) continue;
+
+        Py_ssize_t lo = 0;
+        Py_ssize_t hi = n_we;
+        while (lo < hi) {
+            Py_ssize_t mid = lo + ((hi - lo) >> 1);
+            if (we[mid] < prev) lo = mid + 1;
+            else hi = mid;
+        }
+        int32_t first_window = (lo < n_ws && ws[lo] <= prev) ? (int32_t)lo : -1;
+
+        lo = 0;
+        hi = n_we;
+        while (lo < hi) {
+            Py_ssize_t mid = lo + ((hi - lo) >> 1);
+            if (we[mid] < curr) lo = mid + 1;
+            else hi = mid;
+        }
+        int32_t second_window = (lo < n_ws && ws[lo] <= curr) ? (int32_t)lo : -1;
+
+        int32_t window_idx;
+        if (first_window == -1) window_idx = second_window;
+        else if (second_window == -1 || first_window < second_window) window_idx = first_window;
+        else window_idx = second_window;
+
+        PyObject *p_prev = PyLong_FromLong((long)prev);
+        PyObject *p_dist = PyLong_FromLong((long)distance);
+        PyObject *p_win = PyLong_FromLong((long)window_idx);
+        if (!p_prev || !p_dist || !p_win) {
+            Py_XDECREF(p_prev);
+            Py_XDECREF(p_dist);
+            Py_XDECREF(p_win);
+            goto error;
+        }
+        if (PyList_Append(filt_starts, p_prev) < 0 ||
+            PyList_Append(filt_distances, p_dist) < 0 ||
+            PyList_Append(win_indices, p_win) < 0) {
+            Py_DECREF(p_prev);
+            Py_DECREF(p_dist);
+            Py_DECREF(p_win);
+            goto error;
+        }
+        Py_DECREF(p_prev);
+        Py_DECREF(p_dist);
+        Py_DECREF(p_win);
+    }
+
+    PyMem_Free(locs);
+    PyMem_Free(ws);
+    PyMem_Free(we);
+    PyObject *result = PyTuple_Pack(3, filt_starts, filt_distances, win_indices);
+    Py_DECREF(filt_starts);
+    Py_DECREF(filt_distances);
+    Py_DECREF(win_indices);
+    return result;
+
+error:
+    Py_DECREF(filt_starts);
+    Py_DECREF(filt_distances);
+    Py_DECREF(win_indices);
+    PyMem_Free(locs);
+    PyMem_Free(ws);
+    PyMem_Free(we);
+    return NULL;
+}
+
 // primary function to be passed up to Python
 static PyObject *window_compare_scores(PyObject *self, PyObject *args) {
     PyObject *sequence_obj;
@@ -847,6 +969,12 @@ static PyMethodDef module_methods[] = {
         shift_scores_impl,
         METH_VARARGS,
         PyDoc_STR("Pearson correlations of position-weighted kmer hashes against rotations.")
+    },
+    {
+        "map_cluster_locations",
+        map_cluster_locations,
+        METH_VARARGS,
+        PyDoc_STR("Filter consecutive cluster locations by distance and assign each kept pair to a window.")
     },
     {NULL, NULL, 0, NULL},
 };
