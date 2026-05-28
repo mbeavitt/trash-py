@@ -271,14 +271,16 @@ def classify_arrays(
 
     # R uses `unique()` which preserves first-occurrence order.
     seen: dict[str, None] = {}
-    for r in classified:
+    indices_by_class: dict[str, list[int]] = {}
+    for i, r in enumerate(classified):
         c = r["class"]
+        indices_by_class.setdefault(c, []).append(i)
         if c != "none_identified" and c not in template_names and c not in seen:
             seen[c] = None
     class_order = list(seen.keys())
 
     for cls in class_order:
-        idx = [i for i, r in enumerate(classified) if r["class"] == cls]
+        idx = indices_by_class.get(cls, [])
         subset = [classified[i] for i in idx]
         shifted = shift_classes(subset)
         for k, new_rep in zip(idx, shifted):
@@ -287,7 +289,7 @@ def classify_arrays(
     # R: rbind(processed classes in order, then template/none_identified rows)
     processed: list[dict[str, Any]] = []
     for cls in class_order:
-        processed.extend(r for r in classified if r["class"] == cls)
+        processed.extend(classified[i] for i in indices_by_class.get(cls, []))
     tail_rows = [
         r for r in classified
         if r["class"] in template_names or r["class"] == "none_identified"
