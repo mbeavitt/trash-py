@@ -21,6 +21,7 @@ from pathlib import Path
 from . import _log as log
 from ._ext import (
     collapse_kmers as _collapse_kmers,
+    collapse_kmers_index as _collapse_kmers_index,
     map_cluster_locations as _map_cluster_locations,
     window_compare_scores,
 )
@@ -207,27 +208,12 @@ def chunk_b_collapse_kmers(
     global_min = 2
     max_edit = 2
 
-    kmers_list_local = [
-        sequence[i:i + kmer]
-        for i in range(array.start - 1, array.end - kmer)
-    ]
-    if not kmers_list_local:
+    indexed = _collapse_kmers_index(sequence, kmer, array.start, array.end, global_min)
+    if not indexed:
         return []
 
-    positions_by_kmer: dict[str, list[int]] = {}
-    for pos, kmer_name in enumerate(kmers_list_local, start=array.start):
-        positions_by_kmer.setdefault(kmer_name, []).append(pos)
-
-    items = sorted(
-        ((name, len(locations)) for name, locations in positions_by_kmer.items()),
-        key=lambda x: (-x[1], x[0]),
-    )
-    items = [(n, c) for n, c in items if "N" not in n and "n" not in n]
-    if not items:
-        return []
-    items = [(n, c) for n, c in items if c >= global_min]
-    if not items:
-        return []
+    positions_by_kmer: dict[str, list[int]] = {name: positions for name, _, positions in indexed}
+    items: list[tuple[str, int]] = [(name, count) for name, count, _ in indexed]
 
     min_kmers_count = (len(items) // 1000) + 1
     if min_kmers_count > global_min:

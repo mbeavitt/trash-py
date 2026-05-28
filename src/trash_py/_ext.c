@@ -704,6 +704,198 @@ static PyObject *shift_scores_impl(PyObject *self, PyObject *args) {
     return result;
 }
 
+typedef struct {
+    const char *name;
+    uint32_t count;
+    uint32_t id;
+} CollapseIndexEntry;
+
+static Py_ssize_t g_collapse_kmer_len = 0;
+
+static int collapse_index_cmp(const void *a, const void *b) {
+    const CollapseIndexEntry *ea = (const CollapseIndexEntry *)a;
+    const CollapseIndexEntry *eb = (const CollapseIndexEntry *)b;
+    if (ea->count != eb->count) return ea->count > eb->count ? -1 : 1;
+    return memcmp(ea->name, eb->name, (size_t)g_collapse_kmer_len);
+}
+
+// Build a per-kmer position index for chunk_b_collapse_kmers' first half.
+// Extracts all kmers in sequence[start-1 : end-kmer], groups by kmer string
+// (skipping kmers that contain N/n), filters by min_count, and sorts by
+// (count desc, name asc). Returns list of (name, count, positions) tuples
+// where positions is a list of 1-based positions for that kmer.
+static PyObject *collapse_kmers_index(PyObject *self, PyObject *args) {
+    PyObject *seq_obj;
+    int kmer;
+    Py_ssize_t start;
+    Py_ssize_t end;
+    unsigned int min_count;
+
+    if (!PyArg_ParseTuple(args, "OinnI", &seq_obj, &kmer, &start, &end, &min_count)) {
+        return NULL;
+    }
+    if (kmer <= 0) {
+        PyErr_SetString(PyExc_ValueError, "kmer must be positive");
+        return NULL;
+    }
+
+    PyObject *result = NULL;
+    PyObject *seq_bytes = NULL;
+    int32_t *ids = NULL;
+    uint32_t *counts = NULL;
+    uint32_t *fill_idx = NULL;
+    int32_t **pos_arrays = NULL;
+    CollapseIndexEntry *entries = NULL;
+    KmerIdMap map;
+    int map_initialized = 0;
+    uint32_t n_unique = 0;
+
+    seq_bytes = PyUnicode_AsASCIIString(seq_obj);
+    if (!seq_bytes) goto done;
+
+    Py_ssize_t seq_len = PyBytes_GET_SIZE(seq_bytes);
+    const char *sequence = PyBytes_AS_STRING(seq_bytes);
+
+    Py_ssize_t pos_start = start - 1;
+    Py_ssize_t pos_end_excl = end - kmer;
+    Py_ssize_t n_kmers = pos_end_excl - pos_start;
+
+    if (n_kmers <= 0) {
+        result = PyList_New(0);
+        goto done;
+    }
+    if (pos_start < 0 || pos_end_excl + (Py_ssize_t)kmer > seq_len) {
+        PyErr_SetString(PyExc_ValueError, "array bounds extend outside sequence");
+        goto done;
+    }
+    if (n_kmers > (Py_ssize_t)UINT32_MAX) {
+        PyErr_SetString(PyExc_OverflowError, "too many kmers");
+        goto done;
+    }
+
+    if (!id_map_init(&map, (uint32_t)n_kmers, (Py_ssize_t)kmer, sequence)) {
+        PyErr_NoMemory();
+        goto done;
+    }
+    map_initialized = 1;
+
+    ids = PyMem_Malloc((size_t)n_kmers * sizeof(*ids));
+    counts = PyMem_Calloc((size_t)n_kmers, sizeof(*counts));
+    if (!ids || !counts) { PyErr_NoMemory(); goto done; }
+
+    for (Py_ssize_t i = 0; i < n_kmers; i++) {
+        Py_ssize_t p = pos_start + i;
+        int has_n = 0;
+        for (int j = 0; j < kmer; j++) {
+            char c = sequence[p + j];
+            if (c == 'N' || c == 'n') { has_n = 1; break; }
+        }
+        if (has_n) {
+            ids[i] = -1;
+            continue;
+        }
+        uint32_t id = id_map_intern(&map, p);
+        ids[i] = (int32_t)id;
+        counts[id]++;
+    }
+
+    n_unique = map.next_id;
+    entries = PyMem_Malloc((size_t)n_unique * sizeof(*entries));
+    if (n_unique > 0 && !entries) { PyErr_NoMemory(); goto done; }
+
+    uint32_t n_kept = 0;
+    for (uint32_t id = 0; id < n_unique; id++) {
+        if (counts[id] < min_count) continue;
+        entries[n_kept].name = sequence + map.starts[id];
+        entries[n_kept].count = counts[id];
+        entries[n_kept].id = id;
+        n_kept++;
+    }
+
+    if (n_kept == 0) {
+        result = PyList_New(0);
+        goto done;
+    }
+
+    g_collapse_kmer_len = kmer;
+    qsort(entries, n_kept, sizeof(*entries), collapse_index_cmp);
+
+    pos_arrays = PyMem_Calloc((size_t)n_unique, sizeof(*pos_arrays));
+    fill_idx = PyMem_Calloc((size_t)n_unique, sizeof(*fill_idx));
+    if (!pos_arrays || !fill_idx) { PyErr_NoMemory(); goto done; }
+
+    for (uint32_t k = 0; k < n_kept; k++) {
+        uint32_t id = entries[k].id;
+        pos_arrays[id] = PyMem_Malloc((size_t)entries[k].count * sizeof(int32_t));
+        if (!pos_arrays[id]) { PyErr_NoMemory(); goto done; }
+    }
+
+    for (Py_ssize_t i = 0; i < n_kmers; i++) {
+        if (ids[i] < 0) continue;
+        uint32_t id = (uint32_t)ids[i];
+        if (counts[id] < min_count) continue;
+        pos_arrays[id][fill_idx[id]++] = (int32_t)(start + i);
+    }
+
+    result = PyList_New(0);
+    if (!result) goto done;
+
+    for (uint32_t k = 0; k < n_kept; k++) {
+        uint32_t id = entries[k].id;
+        uint32_t cnt = entries[k].count;
+
+        PyObject *positions = PyList_New((Py_ssize_t)cnt);
+        if (!positions) { Py_CLEAR(result); goto done; }
+        for (uint32_t i = 0; i < cnt; i++) {
+            PyObject *pos_int = PyLong_FromLong((long)pos_arrays[id][i]);
+            if (!pos_int) {
+                for (uint32_t m = i; m < cnt; m++) {
+                    Py_INCREF(Py_None);
+                    PyList_SET_ITEM(positions, (Py_ssize_t)m, Py_None);
+                }
+                Py_DECREF(positions);
+                Py_CLEAR(result);
+                goto done;
+            }
+            PyList_SET_ITEM(positions, (Py_ssize_t)i, pos_int);
+        }
+
+        PyObject *name = PyUnicode_DecodeASCII(entries[k].name, (Py_ssize_t)kmer, "strict");
+        PyObject *count_obj = PyLong_FromUnsignedLong((unsigned long)cnt);
+        if (!name || !count_obj) {
+            Py_XDECREF(name);
+            Py_XDECREF(count_obj);
+            Py_DECREF(positions);
+            Py_CLEAR(result);
+            goto done;
+        }
+        PyObject *tuple = PyTuple_Pack(3, name, count_obj, positions);
+        Py_DECREF(name);
+        Py_DECREF(count_obj);
+        Py_DECREF(positions);
+        if (!tuple) { Py_CLEAR(result); goto done; }
+        if (PyList_Append(result, tuple) < 0) {
+            Py_DECREF(tuple);
+            Py_CLEAR(result);
+            goto done;
+        }
+        Py_DECREF(tuple);
+    }
+
+done:
+    if (pos_arrays) {
+        for (uint32_t id = 0; id < n_unique; id++) PyMem_Free(pos_arrays[id]);
+        PyMem_Free(pos_arrays);
+    }
+    PyMem_Free(fill_idx);
+    PyMem_Free(entries);
+    PyMem_Free(counts);
+    PyMem_Free(ids);
+    if (map_initialized) id_map_free(&map);
+    Py_XDECREF(seq_bytes);
+    return result;
+}
+
 // Count how many elements of `source` (a sequence) appear in `target_set`
 // (a set or frozenset). Duplicates in source count each occurrence.
 static PyObject *coverage_count(PyObject *self, PyObject *args) {
@@ -1015,6 +1207,12 @@ static PyMethodDef module_methods[] = {
         coverage_count,
         METH_VARARGS,
         PyDoc_STR("Count source-sequence elements that are members of target_set (a set/frozenset).")
+    },
+    {
+        "collapse_kmers_index",
+        collapse_kmers_index,
+        METH_VARARGS,
+        PyDoc_STR("Index kmers in a region: returns sorted (name, count, positions) tuples, N-filtered.")
     },
     {NULL, NULL, 0, NULL},
 };
