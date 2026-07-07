@@ -67,6 +67,12 @@ and repeat-mapping stages across multiple worker processes.
 
 ## Benchmarks
 
+![trash-py runtime and parallel speedup vs. process count](docs/images/runtime_plot.png)
+
+Benchmarked on the *A. thaliana* GCA_028009825.2 assembly (144 MB) on a
+32-core host. Increasing `-p` cuts wall-clock runtime from ~230 s at `-p 1`
+to ~59 s at `-p 16`. Speedup is sub-linear and flattens beyond 16 processes,
+so `-p 16` is a reasonable default on this class of host.
 
 ## How to cite
 
