@@ -823,7 +823,215 @@ static PyObject *window_compare_scores(PyObject *self, PyObject *args) {
     return scores;
 }
 
+// ---------------------------------------------------------------------------
+// HOR (higher-order repeat) detection — a byte-for-byte reimplementation of
+// the legacy `HOR.V3.3` binary (its source, `main.c`, was only ever a partial
+// draft that does not even compile).  We read the aligned FASTA exactly as the
+// binary did — including its quirks — so the emitted HOR table matches the
+// original tool byte-for-byte.  See docs/HOR_source_bugs.md for the quirks we
+// deliberately preserve (edge-close SNV undercount, wrapped-line truncation,
+// SNV carry-over across non-similar-but-below-threshold pairs).
+// ---------------------------------------------------------------------------
+
+typedef struct {
+    int32_t *data;   // 6 ints per HOR: start_A,end_A,start_B,end_B,direction,total_variant
+    Py_ssize_t n;    // number of HORs stored
+    Py_ssize_t cap;  // capacity in HORs
+    int ok;
+} HorBuf;
+
+static void horbuf_emit(HorBuf *b, int sa, int ea, int sb, int eb, int dir, long tv) {
+    if (!b->ok) return;
+    if (b->n == b->cap) {
+        Py_ssize_t newcap = b->cap ? b->cap * 2 : 1024;
+        // raw realloc (not PyMem_*): this runs inside Py_BEGIN_ALLOW_THREADS
+        int32_t *p = realloc(b->data, (size_t)newcap * 6 * sizeof(int32_t));
+        if (!p) { b->ok = 0; return; }
+        b->data = p;
+        b->cap = newcap;
+    }
+    int32_t *r = b->data + b->n * 6;
+    r[0] = sa; r[1] = ea; r[2] = sb; r[3] = eb; r[4] = dir; r[5] = (int32_t)tv;
+    b->n++;
+}
+
+// Inner-loop condition selector (mirrors the four distinct `while` guards).
+enum { COND_M1_PARA, COND_M1_PERP, COND_M2_PERP, COND_M2_PARA };
+
+static int hor_cond(int which, int i, int j, int split, int alicount) {
+    switch (which) {
+        case COND_M1_PARA: return j < alicount && i < alicount;
+        case COND_M1_PERP: return j > i;
+        case COND_M2_PERP: return j > split && i <= split;
+        case COND_M2_PARA: return j < alicount && i <= split;
+    }
+    return 0;
+}
+
+// One diagonal walk.  `para` selects the direction predicate and the output
+// index arithmetic (parallel=1 vs perpendicular=2).  `di`/`dj` are the steps.
+static void hor_scan(HorBuf *out, char **rows, const int *dir, long alilength,
+                     int threshold, int cutoff, int i0, int j0, int di, int dj,
+                     int cond, int para, int split, int alicount) {
+    int i = i0, j = j0, openHOR = 0, isSimilar = 0;
+    long snvcount = 0, snvBack = 0;
+    while (hor_cond(cond, i, j, split, alicount)) {
+        snvBack = snvcount;
+        const char *ri = rows[i];
+        const char *rj = rows[j];
+        long snv = 0;
+        for (long k = 0; k < alilength; k++) snv += (ri[k] != rj[k]);
+        int pass = (snv <= threshold);
+        if (pass) snvcount += snv;
+        isSimilar = pass && (para ? (dir[i] == dir[j]) : (dir[i] != dir[j]));
+        if (isSimilar && openHOR == 0) {
+            openHOR = 1;
+        } else if (isSimilar && openHOR > 0) {
+            openHOR++;
+        } else if (!isSimilar && openHOR > 0) {
+            if (openHOR >= cutoff) {
+                if (para) horbuf_emit(out, i - openHOR + 1, i, j - openHOR + 1, j, 1, snvBack);
+                else      horbuf_emit(out, i - openHOR + 1, i, j + 2, j + openHOR + 1, 2, snvBack);
+            }
+            openHOR = 0;
+            snvcount = 0;
+        }
+        i += di;
+        j += dj;
+    }
+    // edge-close: run reached the diagonal boundary while still open. NOTE the
+    // reported total_variant (snvBack) is the value captured at the *top* of
+    // the final iteration, i.e. it omits the last matched pair's SNV — an
+    // off-by-one in the original we reproduce faithfully.
+    if (isSimilar && openHOR >= cutoff) {
+        if (para) horbuf_emit(out, i - openHOR + 1, i, j - openHOR + 1, j, 1, snvBack);
+        else      horbuf_emit(out, i - openHOR + 1, i, j + 2, j + openHOR + 1, 2, snvBack);
+    }
+}
+
+static PyObject *find_hors_impl(PyObject *self, PyObject *args) {
+    const char *path;
+    int split_after, threshold, cutoff, method;
+    if (!PyArg_ParseTuple(args, "siiii", &path, &split_after, &threshold, &cutoff, &method))
+        return NULL;
+
+    int split = split_after - 1;  // binary does atoi(argv[3]) - 1
+
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        PyErr_Format(PyExc_IOError, "cannot open alignment file: %s", path);
+        return NULL;
+    }
+
+    int c;
+    // skip the first header line
+    for (c = fgetc(f); c != 10 && c != EOF; c = fgetc(f)) {}
+    // alignment length = count of non-newline bytes of the first record
+    long alilength = 0;
+    for (c = fgetc(f); c != '>' && c != EOF; c = fgetc(f)) if (c != 10) alilength++;
+    // sequence count: first two records are implied, count remaining '>'
+    int alicount = 2;
+    for (c = fgetc(f); c != EOF; c = fgetc(f)) if (c == '>') alicount++;
+
+    if (alilength <= 0 || alicount < 2) {
+        fclose(f);
+        PyErr_SetString(PyExc_ValueError, "alignment file has too few sequences or zero length");
+        return NULL;
+    }
+
+    char **rows = PyMem_Malloc((size_t)alicount * sizeof(char *));
+    int *dir = PyMem_Malloc((size_t)alicount * sizeof(int));
+    if (!rows || !dir) { PyMem_Free(rows); PyMem_Free(dir); fclose(f);
+        return PyErr_NoMemory(); }
+    for (int r = 0; r < alicount; r++) rows[r] = NULL;
+
+    if (fseek(f, 0, SEEK_SET) != 0) { rewind(f); }
+
+    int read_error = 0;
+    for (int r = 0; r < alicount; r++) {
+        rows[r] = PyMem_Malloc((size_t)alilength);
+        if (!rows[r]) { read_error = 1; break; }
+        // advance to the direction marker 'D' in the header, take the next char
+        for (c = fgetc(f); c != 'D' && c != EOF; c = fgetc(f)) {}
+        dir[r] = fgetc(f);
+        // skip to end of header line
+        for (c = fgetc(f); c != 10 && c != EOF; c = fgetc(f)) {}
+        // read the sequence bytes until the next record, SKIPPING the newlines
+        // introduced by 60-column wrapping (the V3.3 binary strips them, so the
+        // comparison runs over real alignment columns only).
+        long readPos = 0;
+        for (c = fgetc(f); c != '>' && c != EOF; c = fgetc(f)) {
+            if (c == 10) continue;
+            if (readPos < alilength) rows[r][readPos] = (char)c;
+            readPos++;
+        }
+        for (; readPos < alilength; readPos++) rows[r][readPos] = 0;
+    }
+    fclose(f);
+
+    if (read_error) {
+        for (int r = 0; r < alicount; r++) PyMem_Free(rows[r]);
+        PyMem_Free(rows); PyMem_Free(dir);
+        return PyErr_NoMemory();
+    }
+
+    HorBuf out = {NULL, 0, 0, 1};
+
+    Py_BEGIN_ALLOW_THREADS
+    if (method == 1) {
+        // parallel half: diagonals below the main diagonal, i++/j++
+        for (int s = alicount - 1; s > 0; s--)
+            hor_scan(&out, rows, dir, alilength, threshold, cutoff, 0, s, 1, 1,
+                     COND_M1_PARA, 1, split, alicount);
+        // antiparallel half 1: anti-diagonals anchored at i=0, i++/j--
+        for (int s = 1; s < alicount - 1; s++)
+            hor_scan(&out, rows, dir, alilength, threshold, cutoff, 0, s, 1, -1,
+                     COND_M1_PERP, 0, split, alicount);
+        // antiparallel half 2: anti-diagonals anchored at j=alicount-1
+        for (int s = 0; s < alicount - 1; s++)
+            hor_scan(&out, rows, dir, alilength, threshold, cutoff, s, alicount - 1, 1, -1,
+                     COND_M1_PERP, 0, split, alicount);
+    } else {
+        // method 2 — two regions split at `split`; four quadrants.
+        for (int s = split + 1; s < alicount; s++)            // Q1 perp
+            hor_scan(&out, rows, dir, alilength, threshold, cutoff, 0, s, 1, -1,
+                     COND_M2_PERP, 0, split, alicount);
+        for (int s = 1; s <= split; s++)                      // Q2 perp
+            hor_scan(&out, rows, dir, alilength, threshold, cutoff, s, alicount - 1, 1, -1,
+                     COND_M2_PERP, 0, split, alicount);
+        for (int s = alicount - 1; s > split; s--)            // Q3 para
+            hor_scan(&out, rows, dir, alilength, threshold, cutoff, 0, s, 1, 1,
+                     COND_M2_PARA, 1, split, alicount);
+        for (int s = 1; s <= split; s++)                      // Q4 para
+            hor_scan(&out, rows, dir, alilength, threshold, cutoff, s, split + 1, 1, 1,
+                     COND_M2_PARA, 1, split, alicount);
+    }
+    Py_END_ALLOW_THREADS
+
+    for (int r = 0; r < alicount; r++) PyMem_Free(rows[r]);
+    PyMem_Free(rows); PyMem_Free(dir);
+
+    if (!out.ok) { free(out.data); return PyErr_NoMemory(); }
+
+    PyObject *list = PyList_New(out.n);
+    if (!list) { PyMem_Free(out.data); return NULL; }
+    for (Py_ssize_t r = 0; r < out.n; r++) {
+        const int32_t *row = out.data + r * 6;
+        PyObject *tup = Py_BuildValue("(iiiiii)", row[0], row[1], row[2], row[3], row[4], row[5]);
+        if (!tup) { Py_DECREF(list); free(out.data); return NULL; }
+        PyList_SET_ITEM(list, r, tup);
+    }
+    free(out.data);
+    return list;
+}
+
 static PyMethodDef module_methods[] = {
+    {
+        "find_hors",
+        find_hors_impl,
+        METH_VARARGS,
+        PyDoc_STR("Detect HORs in an aligned FASTA, byte-compatible with HOR.V3.3.")
+    },
     {
         "window_compare_scores",
         window_compare_scores,

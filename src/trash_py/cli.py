@@ -8,6 +8,7 @@ from pathlib import Path
 from . import __version__
 from . import _log as log
 from .pipeline import run_pipeline
+from .hor_cli import add_hor_arguments, hor_requested, run_hor_stage
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -37,6 +38,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="parallel worker processes for the array-identification and "
         "repeat-mapping stages (default 1 = serial)",
     )
+    add_hor_arguments(p)
     return p
 
 
@@ -51,4 +53,12 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     args.output.mkdir(parents=True, exist_ok=True)
     run_pipeline(args)
+
+    # Optional HOR detection stage, on the repeat table we just wrote.
+    if hor_requested(args):
+        repeats_with_seq = args.output / f"{Path(args.fasta).name}_repeats_with_seq.csv"
+        if not repeats_with_seq.exists():
+            print(f"cannot run HOR: {repeats_with_seq} not found", file=sys.stderr)
+            return 1
+        return 1 if run_hor_stage(args, repeats_with_seq) else 0
     return 0

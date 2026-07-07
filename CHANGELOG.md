@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - 2026-07-07
+
+### Added
+
+- **HOR (higher-order repeat) detection** — a port of the upstream `HORT.R`
+  module, run as an optional stage after the main pipeline. Enable it with
+  `--chr-list seq1,seq2,...` (self-comparison for several sequences — the common
+  case) or `--ChrA seq` (single sequence), optionally with `--ChrB seq` for a
+  cross-region comparison, plus `-c/--class`, `--hor-threshold` (default 25) and
+  `--hor-min-len` (default 3).
+- The HOR scan is a native reimplementation (`trash_py._ext.find_hors`) of the
+  legacy `HOR.V3.3` binary, reverse-engineered from its disassembly. It
+  reproduces the reference HOR tables essentially **byte-for-byte** across all
+  five *A. thaliana* chromosomes (up to 1.45M rows each) — including the upstream
+  quirks catalogued in `docs/HOR_source_bugs.md` (edge-close SNV under-count, SNV
+  carry-over, the `SNV_per_kbp` block-A-twice typo, and more). The only
+  differences are R's scientific-notation contractions (e.g. `2e+05`), which we
+  deliberately keep as full integers, and a handful (~5 in ~3.9M rows) of
+  last-digit float-rounding differences in `SNV_per_kbp` where R's and Python's
+  formatters round a tie in opposite directions.
+- Per-sequence outputs `HORs_<class>_<seq>.csv`,
+  `repeats_with_hors_<class>_<seq>.csv`, and a matplotlib dot-plot
+  `HORs_lines_<class>_<seq>.png`. The R `pretty()`/`hist()` binning used for the
+  `start.adjusted` column is reproduced exactly.
+- Optional `plot` extra (`pip install trash-py[plot]`) for the HOR plots; HOR
+  detection additionally requires MAFFT on `PATH`.
+
 ## [1.2.0] - 2026-05-25
 
 ### Added

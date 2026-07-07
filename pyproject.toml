@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "trash-py"
-version = "1.2.0"
+version = "2.0.0"
 description = "Tandem-repeat array identifier — Python port of TRASH."
 requires-python = ">=3.11"
 license = { file = "LICENSE" }
@@ -30,6 +30,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+# HOR line plots (the HOR tables themselves need no extra Python deps).
+plot = ["matplotlib>=3.5"]
 
 [project.scripts]
 trash-py = "trash_py.cli:main"
