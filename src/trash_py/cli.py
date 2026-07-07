@@ -2,12 +2,31 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
 from . import __version__
 from . import _log as log
 from .pipeline import run_pipeline
+
+
+def _pin_to_first_cpus(processes: int, quiet: bool) -> None:
+    """Confine this process (and every nhmmer/clustalo child it spawns) to the
+    first ``processes`` CPU cores, so total CPU usage tracks ``-p`` instead of
+    the whole machine lighting up from many short-lived nhmmer calls.
+
+    The affinity mask is inherited across fork and exec, so pinning here — before
+    any worker pool is created — covers the entire process tree. No-op on
+    platforms without an affinity API (macOS, Windows).
+    """
+    if not hasattr(os, "sched_setaffinity"):
+        return
+    available = sorted(os.sched_getaffinity(0))
+    cpus = set(available[:processes])
+    os.sched_setaffinity(0, cpus)
+    if not quiet:
+        print(f"pinned to {len(cpus)} core(s): {sorted(cpus)}", file=sys.stderr)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -46,6 +65,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"--processes must be >= 1 (got {args.processes})", file=sys.stderr)
         return 2
     log.configure(quiet=args.quiet)
+    _pin_to_first_cpus(args.processes, args.quiet)
     if not args.fasta.exists():
         print(f"fasta not found: {args.fasta}", file=sys.stderr)
         return 2
