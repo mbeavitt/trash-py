@@ -31,11 +31,7 @@ _COMP_ONLY = str.maketrans("acgtn", "tgcan")
 
 RepeatRow = dict[str, Any]
 
-# Pin nhmmer to a single core: it defaults to `--cpu 2`, which nests under the
-# `-p` worker pool and oversubscribes the machine (e.g. `-p 10` → ~20-30 cores).
-# Keeping it at 1 makes `-p` the sole, honest knob for CPU usage — matching the
-# `--threads=1` pin on clustalo.
-NHMMER_ARGS = ("--popen", "0.1", "--pextend", "0.8", "--dna", "--cpu", "1")
+NHMMER_ARGS = ("--popen", "0.1", "--pextend", "0.8", "--dna")
 
 
 def _fasta_bytes(header: str, sequence: str, width: int = 60) -> str:
