@@ -17,6 +17,7 @@ organism where the major satellite isn't known yet.
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -82,6 +83,7 @@ def run_hor_after_pipeline(args: argparse.Namespace, repeats_path: Path) -> int:
         genomeB=args.genomeB,
         make_plot=not args.no_plot,
         saveR=not args.no_saveR,
+        threads=getattr(args, "processes", 1) or 1,
     )
 
 
@@ -90,52 +92,94 @@ def run_hor_after_pipeline(args: argparse.Namespace, repeats_path: Path) -> int:
 # ---------------------------------------------------------------------------
 
 def build_hor_parser() -> argparse.ArgumentParser:
+    """The standalone HOR parser. Accepts the full upstream ``HORT.R`` getopt
+    surface (short flags and the underscore long-names) so that replacing
+    ``Rscript HORT.R`` with ``trash-py hor`` in an existing script Just Works,
+    while also accepting a positional repeats file and a ``--chr-list``."""
     p = argparse.ArgumentParser(
         prog="trash-py hor",
         description="TRASH HOR module — detect higher-order repeats in a repeat table.",
     )
-    p.add_argument("repeats", type=Path,
-                   help="repeat table with a sequence column (…_repeats_with_seq.csv)")
-    p.add_argument("-o", "--output", type=Path, default=Path.cwd(),
+    # The repeats table: positional *or* -r/--repeats (HORT.R used -r).
+    p.add_argument("repeats_pos", nargs="?", type=Path, metavar="repeats",
+                   help="repeat table with a sequence column (…_repeats_with_seq.csv); "
+                        "may also be given with -r/--repeats")
+    p.add_argument("-r", "--repeats", dest="repeats", type=Path, default=None,
+                   help="repeat table (HORT.R-compatible alternative to the positional arg)")
+    p.add_argument("-o", "--output", "--output_folder", dest="output",
+                   type=Path, default=Path.cwd(),
                    help="output folder (default: current directory)")
     p.add_argument("-c", "--class", dest="hor_class", default=None,
                    help="repeat class to analyse (e.g. 178_1); "
                         "default: the most abundant class on the target sequences")
-    p.add_argument("-t", "--hor-threshold", type=int, default=25,
-                   help="divergence threshold %% (default 25)")
-    p.add_argument("-l", "--hor-min-len", type=int, default=3,
-                   help="minimum HOR length in repeat units (default 3)")
+    p.add_argument("-t", "--hor-threshold", "--hor_threshold", dest="hor_threshold",
+                   type=int, default=25, help="divergence threshold %% (default 25)")
+    p.add_argument("-l", "--hor-min-len", "--hor_min_len", dest="hor_min_len",
+                   type=int, default=3, help="minimum HOR length in repeat units (default 3)")
+    p.add_argument("-m", "--method", type=int, choices=(1, 2), default=None,
+                   help="1 = self-comparison, 2 = cross-region (usually inferred from --ChrB)")
     p.add_argument("--chr-list", "--hor-chr-list", dest="chr_list",
                    help="comma-separated sequence IDs — self-comparison (method 1) for each")
-    p.add_argument("-A", "--ChrA", dest="chrA",
+    p.add_argument("-A", "--ChrA", "--chrA", dest="chrA",
                    help="single sequence ID for method 1 (or region A of method 2)")
-    p.add_argument("-B", "--ChrB", dest="chrB",
+    p.add_argument("-B", "--ChrB", "--chrB", dest="chrB",
                    help="region B sequence ID — enables cross-region comparison (method 2)")
-    p.add_argument("-b", "--repeatsB", type=Path,
+    p.add_argument("-b", "--repeatsB", dest="repeatsB", type=Path,
                    help="region-B repeats table (default: same as the main repeats file)")
-    p.add_argument("-C", "--classB", help="region-B repeat class (default: same as --class)")
-    p.add_argument("-g", "--genomeA", default="A", help="label for genome A (--ChrB mode)")
-    p.add_argument("-G", "--genomeB", default="B", help="label for genome B (--ChrB mode)")
-    p.add_argument("--no-plot", dest="no_plot", action="store_true", help="skip the HOR line plot")
+    p.add_argument("-C", "--classB", dest="classB",
+                   help="region-B repeat class (default: same as --class)")
+    p.add_argument("-g", "--genomeA", dest="genomeA", default="A",
+                   help="label for genome A (--ChrB mode)")
+    p.add_argument("-G", "--genomeB", dest="genomeB", default="B",
+                   help="label for genome B (--ChrB mode)")
+    p.add_argument("-s", "--saveR", dest="saveR", choices=("y", "n"), default=None,
+                   help="--ChrB mode: write repeats_with_hors (y/n)")
+    p.add_argument("-p", "--plot-simple", "--plot_simple", dest="plot_simple",
+                   choices=("y", "n"), default=None,
+                   help="accepted for HORT.R compatibility (a plot is always produced)")
+    p.add_argument("--no-plot", dest="no_plot", action="store_true",
+                   help="skip the HOR plot")
     p.add_argument("--no-saveR", dest="no_saveR", action="store_true",
                    help="--ChrB mode only: skip writing repeats_with_hors")
+    p.add_argument("-T", "--threads", type=int, default=None,
+                   help="MAFFT threads (default: all available cores)")
     p.add_argument("-q", "--quiet", action="store_true", help="suppress progress output")
     return p
 
 
 def run_hor_cli(ns: argparse.Namespace) -> int:
     """Entry point for the standalone `trash-py hor` subcommand."""
-    if not ns.repeats.exists():
-        print(f"repeats file not found: {ns.repeats}", file=sys.stderr)
+    repeats = ns.repeats or ns.repeats_pos
+    if repeats is None:
+        print("no repeats table given (pass it positionally or with -r/--repeats)",
+              file=sys.stderr)
+        return 2
+    if not repeats.exists():
+        print(f"repeats file not found: {repeats}", file=sys.stderr)
         return 2
     if shutil.which("mafft") is None:
         print("mafft not found on PATH — install it (e.g. `conda install -c bioconda mafft`)",
               file=sys.stderr)
         return 2
+
+    # Reconcile the explicit --method with the presence of --ChrB.
+    if ns.method == 2 and not ns.chrB:
+        print("method 2 (-m 2) requires a region B (--ChrB/-B)", file=sys.stderr)
+        return 2
+    if ns.method == 1 and ns.chrB:
+        print("method 1 (-m 1) is a self-comparison; drop --ChrB or use -m 2", file=sys.stderr)
+        return 2
+
+    # saveR: -s y/n wins, else --no-saveR, else default on.
+    if ns.saveR is not None:
+        save = ns.saveR == "y"
+    else:
+        save = not ns.no_saveR
+
     ns.output.mkdir(parents=True, exist_ok=True)
     return _run(
-        repeats=ns.repeats,
-        repeatsB=ns.repeatsB or ns.repeats,
+        repeats=repeats,
+        repeatsB=ns.repeatsB or repeats,
         output=ns.output,
         chr_list=ns.chr_list,
         chrA=ns.chrA,
@@ -147,7 +191,8 @@ def run_hor_cli(ns: argparse.Namespace) -> int:
         genomeA=ns.genomeA,
         genomeB=ns.genomeB,
         make_plot=not ns.no_plot,
-        saveR=not ns.no_saveR,
+        saveR=save,
+        threads=ns.threads if ns.threads is not None else (os.cpu_count() or 1),
     )
 
 
@@ -174,7 +219,7 @@ def _resolve_class(repeats: Path, seq_ids: set[str], explicit: str | None) -> st
 def _run(*, repeats: Path, repeatsB: Path, output: Path, chr_list: str | None,
          chrA: str | None, chrB: str | None, hor_class: str | None, classB: str | None,
          hor_threshold: int, hor_min_len: int, genomeA: str, genomeB: str,
-         make_plot: bool, saveR: bool) -> int:
+         make_plot: bool, saveR: bool, threads: int = 1) -> int:
     if not chr_list and not chrA:
         print("specify --hor-chr-list, or --hor-ChrA (optionally with --hor-ChrB)",
               file=sys.stderr)
@@ -191,7 +236,7 @@ def _run(*, repeats: Path, repeatsB: Path, output: Path, chr_list: str | None,
             return 2
         args = HorArgs(repeats=repeats, output_folder=output, hor_class=resolved,
                        hor_threshold=hor_threshold, hor_min_len=hor_min_len,
-                       make_plot=make_plot)
+                       make_plot=make_plot, threads=threads)
         try:
             run_hor_pair(args, chrA, chrB, classB=classB or resolved, repeatsB=repeatsB,
                          genomeA=genomeA, genomeB=genomeB, saveR=saveR)
@@ -214,7 +259,7 @@ def _run(*, repeats: Path, repeatsB: Path, output: Path, chr_list: str | None,
         print("could not determine a repeat class (empty table?)", file=sys.stderr)
         return 2
     args = HorArgs(repeats=repeats, output_folder=output, hor_class=resolved,
-                   hor_threshold=hor_threshold, hor_min_len=hor_min_len, make_plot=make_plot)
+                   hor_threshold=hor_threshold, hor_min_len=hor_min_len, make_plot=make_plot, threads=threads)
 
     failures = 0
     for chrom in chrs:

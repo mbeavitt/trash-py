@@ -28,7 +28,7 @@ SAMPLE_ALN = DATA / "hor_sample_aligned.fasta"
 
 
 def _inject_alignment(monkeypatch, aln: Path) -> None:
-    def fake_align(repeats, out_dir, name):
+    def fake_align(repeats, out_dir, name, threads=1):
         dst = Path(out_dir) / f"{name}temp.aligned.fasta"
         shutil.copy(aln, dst)
         return dst
@@ -56,7 +56,7 @@ def test_hor_plot_is_written(tmp_path: Path, monkeypatch) -> None:
     args = HorArgs(repeats=SAMPLE_REPEATS, output_folder=tmp_path,
                    hor_class="178_1", make_plot=True)
     run_hor_single(args, "CP116282.1")
-    png = tmp_path / "HORs_lines_178_1_CP116282.1.png"
+    png = tmp_path / "HORs_dotplot_178_1_CP116282.1.png"
     assert png.exists() and png.stat().st_size > 0
 
 

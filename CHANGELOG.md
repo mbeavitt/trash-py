@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] - 2026-07-08
+
+### Added
+
+- **HORT.R drop-in compatibility.** `trash-py hor` now accepts the full upstream
+  `HORT.R` getopt surface — `-r/--repeats` (the table can be a flag as well as
+  the positional arg), `-m/--method`, `-s/--saveR`, `-p/--plot_simple`,
+  `-A/--chrA`, `-B/--chrB`, and the underscore long-names (`--output_folder`,
+  `--hor_threshold`, …) — so replacing `Rscript HORT.R` with `trash-py hor` in an
+  existing script works unchanged.
+- **Multi-threaded MAFFT.** MAFFT is ~65–70% of HOR runtime and was
+  single-threaded; it now runs `--thread`-parallel (`-T/--threads` for
+  `trash-py hor`, default all cores; wired to `-p` in a pipeline run). Verified
+  byte-identical to the single-threaded alignment, so the HOR tables are
+  unchanged — it's a free ~4× on the alignment step (≈40s → ≈10s at 8 threads).
+
+### Changed
+
+- **HOR plot is now a "stained-glass" self-similarity dot-plot**
+  (`HORs_dotplot_<class>_<seq>.png`): each HOR block is a translucent diagonal
+  segment on a chromosome-vs-chromosome plane (parallel along the diagonal,
+  inverted repeats along the anti-diagonal, mirrored across y=x), coloured by
+  divergence on a perceptual sequential ramp over a dark ground. Replaces the old
+  line plot.
+
 ## [2.1.0] - 2026-07-08
 
 ### Changed

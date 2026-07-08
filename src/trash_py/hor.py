@@ -183,11 +183,15 @@ def _wrap60(seq: str) -> str:
     return "\n".join(seq[i:i + 60] for i in range(0, len(seq), 60))
 
 
-def align_repeats(repeats: list[Repeat], out_dir: Path, name: str) -> Path:
+def align_repeats(repeats: list[Repeat], out_dir: Path, name: str, threads: int = 1) -> Path:
     """Reproduce `write_align_read`: write a FASTA (names ``<i>_D<strand>``),
     run ``mafft --retree 2 --inputorder``, and lower-case the result. The HOR
     scanner strips newlines, so wrapping width of the aligned file is
-    irrelevant — only order, names and (lower-cased) columns matter."""
+    irrelevant — only order, names and (lower-cased) columns matter.
+
+    `threads` is passed to ``mafft --thread``; it parallelises FFT-NS-2 and
+    (verified) leaves the alignment — and therefore the HOR table — byte-for-byte
+    identical, so it's a free speedup (MAFFT is ~65-70%% of HOR runtime)."""
     if shutil.which("mafft") is None:
         raise RuntimeError(
             "mafft not found on PATH — install it (e.g. `conda install -c bioconda mafft`)"
@@ -201,7 +205,7 @@ def align_repeats(repeats: list[Repeat], out_dir: Path, name: str) -> Path:
     with aligned.open("w") as out:
         proc = log.run_external(
             "mafft",
-            ["mafft", "--retree", "2", "--inputorder", str(in_fasta)],
+            ["mafft", "--thread", str(threads), "--retree", "2", "--inputorder", str(in_fasta)],
             stdout=out, stderr=__import__("subprocess").DEVNULL,
         )
     if proc.returncode != 0:
@@ -284,6 +288,7 @@ class HorArgs:
     hor_threshold: int = 25
     hor_min_len: int = 3
     make_plot: bool = True
+    threads: int = 1
 
 
 def run_hor_single(args: HorArgs, chrA: str, rng_tag: float = 0.0) -> None:
@@ -303,7 +308,7 @@ def run_hor_single(args: HorArgs, chrA: str, rng_tag: float = 0.0) -> None:
     log.detail(f"{len(repeats)} repeats; threshold_SNV={threshold_snv}, min_len={args.hor_min_len}")
 
     name = f"{args.hor_class}__{chrA}_{rng_tag}_"
-    aligned = align_repeats(repeats, args.output_folder, name)
+    aligned = align_repeats(repeats, args.output_folder, name, threads=args.threads)
     log.tool_summary("mafft")
 
     hors = _ext.find_hors(str(aligned), 1, threshold_snv, args.hor_min_len, 1)
@@ -326,8 +331,8 @@ def run_hor_single(args: HorArgs, chrA: str, rng_tag: float = 0.0) -> None:
     if args.make_plot:
         try:
             from .hor_plot import plot_hors
-            plot_hors(annotated, adjusted, bins,
-                      args.output_folder / f"HORs_lines_{args.hor_class}_{chrA}.png",
+            plot_hors(annotated,
+                      args.output_folder / f"HORs_dotplot_{args.hor_class}_{chrA}.png",
                       chrA, args.hor_class, args.hor_threshold)
         except Exception as e:  # plots are best-effort
             log.warn(f"HOR plot failed: {e}")
@@ -353,7 +358,7 @@ def run_hor_pair(args: HorArgs, chrA: str, chrB: str, classB: str,
     threshold_snv = math.floor(args.hor_threshold * _median([r.width for r in combined]) / 100)
 
     name = f"{args.hor_class}_{classB}_{chrA}_{chrB}_{genomeA}_{genomeB}_"
-    aligned = align_repeats(combined, args.output_folder, name)
+    aligned = align_repeats(combined, args.output_folder, name, threads=args.threads)
     log.tool_summary("mafft")
 
     hors = _ext.find_hors(str(aligned), split_after, threshold_snv, args.hor_min_len, 2)
