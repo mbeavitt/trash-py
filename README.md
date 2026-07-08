@@ -69,33 +69,32 @@ and repeat-mapping stages across multiple worker processes.
 
 ### HOR detection
 
-Higher-order-repeat (HOR) detection — the port of the upstream `HORT.R` module —
-can be run two ways.
+TL;DR: replace "HORT.R" with "trash-py hor" and any previous scripts you've written should still work with the original CLI :)
 
-1. Inline HOR detection, as part of the main pipeline — add `--hor-chr-list` to a
-normal run and HORs are detected on the repeat table the pipeline just produced, using the most abundant class of repeats (e.g. 178_1 in Arabidopsis):
+Higher-order-repeat (HOR) detection can be run in one of two ways:
+
+1. Inline HOR detection, for your convenience, as part of the main pipeline. Add a list of fasta sequence IDs (`--hor-chr-list`) to a
+normal run and HOR detection is added using the most abundant class of repeats (i.e. 178_1 in Arabidopsis):
 
 ```
 trash-py -f genome.fasta -o out --hor-chr-list Chr1,Chr2,Chr3
 ```
 
 2. Standalone, to re-run HOR finding on an existing
-`<fasta>_repeats_with_seq.csv` without redoing the whole pipeline — handy for targeting a different class or set of sequences. `-c/--class` picks the class explicitly — any class, e.g. `178_1`, `178_2`, or, as below, the 113 bp `113_15` satellite:
+`<fasta>_repeats_with_seq.csv` file without re-running the whole pipeline. `-c/--class` picks the class explicitly, e.g. `178_1`, `178_2`, `113_15`, and so on.
 
 ```
 # a non-primary class across several sequences
 trash-py hor out/genome.fasta_repeats_with_seq.csv -c 113_15 --chr-list Chr1,Chr2 -o out
 
-# a single sequence
+# a single sequence (i.e., the original CLI
 trash-py hor out/genome.fasta_repeats_with_seq.csv -c 113_15 --ChrA Chr1 -o out
 
 # cross-region comparison (region A vs region B)
 trash-py hor out/genome.fasta_repeats_with_seq.csv -c 113_15 --ChrA Chr1 --ChrB Chr2 -o out
 ```
 
-You don't have to know the satellite class up front: **the class is optional and
-defaults to the most abundant class on the target sequence(s)** — usually the
-centromeric satellite — with the choice logged. Override with `--hor-class`
+You don't have to know the satellite class up front, if --class is not provided the tool will pick the most abundant one. Override with `--hor-class`
 (pipeline) / `-c/--class` (subcommand), or run it again for another class.
 
 For each sequence this writes `HORs_<class>_<seq>.csv` (the HOR table),
