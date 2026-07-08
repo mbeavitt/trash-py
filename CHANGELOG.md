@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.0] - 2026-07-08
+
+### Performance
+
+- **HOR detection now streams its output** instead of materialising the whole
+  result in memory. The native scan writes raw HOR rows to disk
+  (`_ext.find_hors_stream`) and the Python layer annotates + formats them in
+  chunks, so **peak memory is O(N repeats), not O(#HORs)**. A single homogeneous
+  array can produce tens of millions of HORs (10 GB+ tables) — previously that
+  needed tens of GB of RAM (and could OOM); now it doesn't. Output is
+  byte-identical; `hors_formed_count` is computed via an O(N) difference array
+  and plots use a strided subsample.
+- The per-pair SNV comparison **early-exits** once the divergence threshold is
+  exceeded — byte-identical (the exact count is only ever used for pairs that
+  pass), and faster on the O(N²) scan (helps most when many pairs are divergent).
+
 ## [2.3.2] - 2026-07-08
 
 ### Changed

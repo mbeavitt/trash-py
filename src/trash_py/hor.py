@@ -152,17 +152,6 @@ def _looks_numeric(s: str) -> bool:
         return False
 
 
-def _write_hors_csv(path: Path, rows: list[list]) -> None:
-    """HORs table — R's `write.csv(hors)` *with* row names ("","1","2",...)."""
-    with Path(path).open("w", newline="") as f:
-        f.write(",".join(['""'] + [f'"{c}"' for c in HORS_COLUMNS]))
-        f.write("\n")
-        for i, row in enumerate(rows, start=1):
-            f.write(f'"{i}",')
-            f.write(",".join(_format(v) for v in row))
-            f.write("\n")
-
-
 def _write_repeats_with_hors_csv(path: Path, repeats: list[Repeat],
                                  start_adjusted: list[float],
                                  hors_count: list[int], n_rep: int) -> None:
@@ -243,29 +232,89 @@ def align_repeats(repeats: list[Repeat], out_dir: Path, name: str, threads: int 
 # Derived columns
 # --------------------------------------------------------------------------
 
-def _annotate_hors(hors: list[tuple], repeats: list[Repeat]) -> list[list]:
-    """Append the derived bp/size/divergence columns (hort.R lines 117-126).
+def _stream_hors_to_csv(raw_path: Path, repeats: list[Repeat], out_path: Path,
+                        both_blocks: bool, total: int, plot_cap: int = 0
+                        ) -> "tuple[list[int], list[list]]":
+    """Stream the raw HOR file (6 native int32 per HOR, as written by
+    ``_ext.find_hors_stream``) into the final HORs CSV, computing the derived
+    bp/size/divergence columns per chunk. Peak memory is O(N + chunk),
+    independent of the number of HORs — the point of the exercise when a single
+    array yields tens of millions of them.
 
-    NOTE: `SNV_per_kbp` divides by block A's size twice — reproducing an
-    upstream typo (`block.A.size.bp + block.A.size.bp`) instead of A + B."""
-    out: list[list] = []
-    for sa, ea, sb, eb, direction, tv in hors:
-        start_a_bp = repeats[sa - 1].start
-        start_b_bp = repeats[sb - 1].start
-        end_a_bp = repeats[ea - 1].end
-        end_b_bp = repeats[eb - 1].end
-        chr_a = repeats[sa - 1].seqID
-        chr_b = repeats[sb - 1].seqID
-        bsu = ea - sa + 1
-        ba = end_a_bp - start_a_bp + 1
-        bb = end_b_bp - start_b_bp + 1
-        snv_per_kbp = 1000.0 * tv / ((ba + ba) / 2.0)
-        out.append([
-            sa, ea, sb, eb, direction, tv,
-            start_a_bp, start_b_bp, end_a_bp, end_b_bp,
-            chr_a, chr_b, bsu, ba, bb, float(snv_per_kbp),
-        ])
-    return out
+    Also returns the per-repeat ``hors_formed_count`` (via an O(N) difference
+    array) and a strided sample of annotated rows for plotting (≤ ~plot_cap).
+
+    NOTE: `SNV_per_kbp` divides by block A's size twice — reproducing an upstream
+    typo (`block.A.size.bp + block.A.size.bp`) instead of A + B. Kept byte-exact
+    against the batch path via `io_csv._format`."""
+    import numpy as np
+
+    n_rep = len(repeats)
+    starts = np.fromiter((r.start for r in repeats), np.int64, n_rep)
+    ends = np.fromiter((r.end for r in repeats), np.int64, n_rep)
+    qseq = [f'"{r.seqID}"' for r in repeats]
+    single_seq = len({r.seqID for r in repeats}) == 1
+    const_q = qseq[0] if single_seq else None
+
+    diff = np.zeros(n_rep + 1, dtype=np.int64)          # A-block range increments
+    diffB = np.zeros(n_rep + 1, dtype=np.int64) if both_blocks else None
+    stride = max(1, total // plot_cap) if plot_cap else 0
+    plot_rows: list[list] = []
+
+    CHUNK = 1 << 18   # HOR rows per chunk (bounds the per-chunk memory spike)
+    header = ",".join(['""'] + [f'"{c}"' for c in HORS_COLUMNS]) + "\n"
+    idx = 0
+    with Path(out_path).open("w", newline="") as out, Path(raw_path).open("rb") as raw:
+        out.write(header)
+        while True:
+            buf = raw.read(CHUNK * 24)          # 6 int32 = 24 bytes / HOR
+            if not buf:
+                break
+            a = np.frombuffer(buf, dtype=np.int32).reshape(-1, 6).astype(np.int64)
+            sa, ea, sb, eb, dv, tv = (a[:, k] for k in range(6))
+            sabp = starts[sa - 1]; sbbp = starts[sb - 1]
+            eabp = ends[ea - 1]; ebbp = ends[eb - 1]
+            bsu = ea - sa + 1
+            ba = eabp - sabp + 1
+            bb = ebbp - sbbp + 1
+            snvk = 1000.0 * tv / ba              # (ba+ba)/2 == ba; matches the batch path
+
+            # hors_formed_count via difference array (each HOR marks a unit range)
+            diff += np.bincount(sa - 1, minlength=n_rep + 1)
+            diff -= np.bincount(sa - 1 + bsu, minlength=n_rep + 1)
+            if both_blocks:
+                diffB += np.bincount(sb - 1, minlength=n_rep + 1)
+                diffB -= np.bincount(sb - 1 + bsu, minlength=n_rep + 1)
+
+            saL, eaL, sbL, ebL = sa.tolist(), ea.tolist(), sb.tolist(), eb.tolist()
+            dvL, tvL = dv.tolist(), tv.tolist()
+            sabpL, sbbpL = sabp.tolist(), sbbp.tolist()
+            eabpL, ebbpL = eabp.tolist(), ebbp.tolist()
+            bsuL, baL, bbL, snvL = bsu.tolist(), ba.tolist(), bb.tolist(), snvk.tolist()
+
+            lines = []
+            for t in range(len(saL)):
+                idx += 1
+                if single_seq:
+                    ca = cb = const_q
+                else:
+                    ca = qseq[saL[t] - 1]; cb = qseq[sbL[t] - 1]
+                lines.append(
+                    f'"{idx}",{saL[t]},{eaL[t]},{sbL[t]},{ebL[t]},{dvL[t]},{tvL[t]},'
+                    f'{sabpL[t]},{sbbpL[t]},{eabpL[t]},{ebbpL[t]},{ca},{cb},'
+                    f'{bsuL[t]},{baL[t]},{bbL[t]},{_format(snvL[t])}'
+                )
+                if stride and (idx - 1) % stride == 0:
+                    plot_rows.append([saL[t], eaL[t], sbL[t], ebL[t], dvL[t], tvL[t],
+                                      sabpL[t], sbbpL[t], eabpL[t], ebbpL[t], ca, cb,
+                                      bsuL[t], baL[t], bbL[t], snvL[t]])
+            out.write("\n".join(lines))
+            out.write("\n")
+
+    counts = np.cumsum(diff[:n_rep])
+    if both_blocks:
+        counts = counts + np.cumsum(diffB[:n_rep])
+    return counts.tolist(), plot_rows
 
 
 def _start_adjusted(repeats: list[Repeat]) -> tuple[list[float], "object"]:
@@ -277,19 +326,6 @@ def _start_adjusted(repeats: list[Repeat]) -> tuple[list[float], "object"]:
             if bs <= r.start < be:
                 adjusted[k] = r.start - corr
     return adjusted, bins
-
-
-def _hors_formed_count(annotated: list[list], n_rep: int, both_blocks: bool) -> list[int]:
-    counts = [0] * n_rep
-    for row in annotated:
-        sa, sb = row[0], row[2]
-        bsu = row[12]
-        for u in range(sa, sa + bsu):
-            counts[u - 1] += 1
-        if both_blocks:
-            for u in range(sb, sb + bsu):
-                counts[u - 1] += 1
-    return counts
 
 
 # --------------------------------------------------------------------------
@@ -327,27 +363,30 @@ def run_hor_single(args: HorArgs, chrA: str, rng_tag: float = 0.0) -> None:
     aligned = align_repeats(repeats, args.output_folder, name, threads=args.threads)
     log.tool_summary("mafft")
 
-    hors = _ext.find_hors(str(aligned), 1, threshold_snv, args.hor_min_len, 1)
-    log.detail(f"HORs identified: {len(hors)}")
+    raw = args.output_folder / f"{name}raw.hors"
+    total = _ext.find_hors_stream(str(aligned), str(raw), 1, threshold_snv, args.hor_min_len, 1)
+    log.detail(f"HORs identified: {total}")
     aligned.unlink(missing_ok=True)
 
-    if len(hors) <= 1:
+    if total <= 1:
         log.detail("No HORs identified")
+        raw.unlink(missing_ok=True)
         return
 
-    annotated = _annotate_hors(hors, repeats)
     out_hors = args.output_folder / f"HORs_{args.hor_class}_{chrA}.csv"
-    _write_hors_csv(out_hors, annotated)
+    plot_cap = 400_000 if args.make_plot else 0
+    counts, plot_rows = _stream_hors_to_csv(
+        raw, repeats, out_hors, both_blocks=False, total=total, plot_cap=plot_cap)
+    raw.unlink(missing_ok=True)
 
     adjusted, bins = _start_adjusted(repeats)
-    counts = _hors_formed_count(annotated, len(repeats), both_blocks=False)
     out_rep = args.output_folder / f"repeats_with_hors_{args.hor_class}_{chrA}.csv"
     _write_repeats_with_hors_csv(out_rep, repeats, adjusted, counts, len(repeats))
 
     if args.make_plot:
         try:
             from .hor_plot import plot_hors
-            plot_hors(annotated,
+            plot_hors(plot_rows,
                       args.output_folder / f"HORs_dotplot_{args.hor_class}_{chrA}.png",
                       chrA, args.hor_class, args.hor_threshold)
         except Exception as e:  # plots are best-effort
@@ -377,22 +416,26 @@ def run_hor_pair(args: HorArgs, chrA: str, chrB: str, classB: str,
     aligned = align_repeats(combined, args.output_folder, name, threads=args.threads)
     log.tool_summary("mafft")
 
-    hors = _ext.find_hors(str(aligned), split_after, threshold_snv, args.hor_min_len, 2)
-    log.detail(f"HORs identified: {len(hors)}")
+    raw = args.output_folder / f"{name}raw.hors"
+    total = _ext.find_hors_stream(str(aligned), str(raw), split_after, threshold_snv,
+                                  args.hor_min_len, 2)
+    log.detail(f"HORs identified: {total}")
     aligned.unlink(missing_ok=True)
 
     suffix = f"{args.hor_class}_{classB}_{chrA}_{chrB}_{genomeA}_{genomeB}"
-    if len(hors) <= 1:
+    if total <= 1:
         log.detail("No HORs identified")
+        raw.unlink(missing_ok=True)
         _write_summary(args.output_folder / f"summary_of_hors_{suffix}.csv",
                        genomeA, genomeB, chrA, chrB, args.hor_class, classB,
                        split_after, len(combined) - split_after, 0, 0)
         return
 
-    annotated = _annotate_hors(hors, combined)
-    _write_hors_csv(args.output_folder / f"HORs_{suffix}.csv", annotated)
+    counts, _ = _stream_hors_to_csv(
+        raw, combined, args.output_folder / f"HORs_{suffix}.csv",
+        both_blocks=True, total=total, plot_cap=0)
+    raw.unlink(missing_ok=True)
 
-    counts = _hors_formed_count(annotated, len(combined), both_blocks=True)
     if saveR:
         adjusted, _ = _start_adjusted(combined)
         _write_repeats_with_hors_csv(

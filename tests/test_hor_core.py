@@ -87,3 +87,19 @@ def test_no_hors_below_cutoff(tmp_path: Path) -> None:
         ("1_D1", "AAAA"), ("2_D1", "CCCC"), ("3_D1", "GGGG"), ("4_D1", "AAAA"),
     ])
     assert _ext.find_hors(aln, 1, 0, 3, 1) == []
+
+
+def test_stream_matches_list(tmp_path: Path) -> None:
+    """`find_hors_stream` (file, streaming) emits the same rows as `find_hors`
+    (in-memory list), in the same order."""
+    import numpy as np
+    aln = _write_aln(tmp_path / "s.fasta", [
+        ("1_D1", "AAAA"), ("2_D1", "CCCC"), ("3_D1", "GGGG"),
+        ("4_D1", "AAAT"), ("5_D1", "CCCT"), ("6_D1", "GGGT"), ("7_D1", "TTTT"),
+    ])
+    lst = _ext.find_hors(aln, 1, 2, 3, 1)
+    raw = tmp_path / "out.raw"
+    n = _ext.find_hors_stream(aln, str(raw), 1, 2, 3, 1)
+    rows = np.fromfile(raw, dtype=np.int32).reshape(-1, 6)
+    assert n == len(lst)
+    assert [tuple(int(x) for x in r) for r in rows] == [tuple(t) for t in lst]
