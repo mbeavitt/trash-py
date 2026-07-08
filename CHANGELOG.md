@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2026-07-08
+
+### Changed
+
+- **HOR detection now has a dedicated `trash-py hor` subcommand** for running on
+  an existing `…_repeats_with_seq.csv` (e.g. to re-run for a different class or
+  set of sequences without redoing the pipeline):
+  `trash-py hor repeats_with_seq.csv --chr-list Chr1,Chr2 -o out`.
+- The in-pipeline "run and done" path is retained: the trigger flag is renamed
+  `--chr-list` → **`--hor-chr-list`** (and the other in-pipeline HOR options are
+  now `--hor-`prefixed: `--hor-ChrA`/`--hor-ChrB`/`--hor-class`/…) so they read
+  clearly alongside the pipeline flags. `trash-py -f g.fasta -o out --hor-chr-list Chr1`
+  runs the pipeline and then HOR detection on its output.
+
+### Added
+
+- **Automatic class selection.** `--class`/`--hor-class` is now optional; when
+  omitted, the most abundant repeat class on the target sequence(s) is selected
+  (and logged). This makes HOR detection usable on a new organism before you
+  know which satellite is the major one.
+
 ## [2.0.0] - 2026-07-07
 
 ### Added

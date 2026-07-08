@@ -68,26 +68,41 @@ and repeat-mapping stages across multiple worker processes.
 ### HOR detection
 
 Higher-order-repeat (HOR) detection — the port of the upstream `HORT.R` module —
-runs as an optional stage after the main pipeline, on the repeat table it just
-produced. Turn it on by naming the sequence(s) to analyse and the repeat class:
+can be run two ways.
+
+**1. Run-and-done**, as part of the main pipeline — add `--hor-chr-list` to a
+normal run and HORs are detected on the repeat table the pipeline just produced:
 
 ```
-# common case: self-comparison HORs for several sequences in one run
-trash-py -f genome.fasta -o out --chr-list Chr1,Chr2,Chr3 -c 178_1
+trash-py -f genome.fasta -o out --hor-chr-list Chr1,Chr2,Chr3
+```
+
+**2. Standalone**, to re-run HOR finding on an existing
+`<fasta>_repeats_with_seq.csv` — e.g. for a different class or set of sequences
+— without redoing the whole pipeline:
+
+```
+# self-comparison HORs for several sequences
+trash-py hor out/genome.fasta_repeats_with_seq.csv --chr-list Chr1,Chr2 -o out
 
 # a single sequence
-trash-py -f genome.fasta -o out --ChrA Chr1 -c 178_1
+trash-py hor out/genome.fasta_repeats_with_seq.csv --ChrA Chr1 -o out
 
 # cross-region comparison (region A vs region B)
-trash-py -f genome.fasta -o out --ChrA Chr1 --ChrB Chr2 -c 178_1
+trash-py hor out/genome.fasta_repeats_with_seq.csv --ChrA Chr1 --ChrB Chr2 -o out
 ```
+
+You don't have to know the satellite class up front: **the class is optional and
+defaults to the most abundant class on the target sequence(s)** — usually the
+centromeric satellite — with the choice logged. Override with `--hor-class`
+(pipeline) / `-c/--class` (subcommand), or run it again for another class.
 
 For each sequence this writes `HORs_<class>_<seq>.csv` (the HOR table),
 `repeats_with_hors_<class>_<seq>.csv` (per-repeat annotation), and a
 `HORs_lines_<class>_<seq>.png` dot-plot. The HOR tables are reproduced
 **byte-for-byte** against the reference tool; the algorithm is a native
-reimplementation of the `HOR.V3.3` binary. `--hor-threshold` (default 25) and
-`--hor-min-len` (default 3) mirror the upstream `-t`/`-l`. HOR detection needs
+reimplementation of the `HOR.V3.3` binary. `-t/--hor-threshold` (default 25) and
+`-l/--hor-min-len` (default 3) mirror the upstream flags. HOR detection needs
 [MAFFT](https://mafft.cbrc.jp/) on `PATH`; plots need `matplotlib`
 (`pip install trash-py[plot]`). Quirks preserved from the original tool are
 documented in [`docs/HOR_source_bugs.md`](docs/HOR_source_bugs.md).

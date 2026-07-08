@@ -1,4 +1,10 @@
-"""Command-line entry point. Mirrors the upstream TRASH.R argument surface."""
+"""Command-line entry point. Mirrors the upstream TRASH.R argument surface.
+
+Two entry paths:
+* ``trash-py -f in.fasta -o out ...`` — the tandem-repeat pipeline (default).
+* ``trash-py hor <repeats_with_seq.csv> ...`` — HOR detection on an existing
+  repeat table (the port of the upstream ``HORT.R`` module).
+"""
 from __future__ import annotations
 
 import argparse
@@ -8,7 +14,13 @@ from pathlib import Path
 from . import __version__
 from . import _log as log
 from .pipeline import run_pipeline
-from .hor_cli import add_hor_arguments, hor_requested, run_hor_stage
+from .hor_cli import (
+    add_hor_arguments,
+    build_hor_parser,
+    hor_requested,
+    run_hor_after_pipeline,
+    run_hor_cli,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -43,6 +55,15 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+
+    # `trash-py hor ...` is a separate subcommand for HOR detection; everything
+    # else is the original tandem-repeat pipeline, unchanged.
+    if argv and argv[0] == "hor":
+        ns = build_hor_parser().parse_args(argv[1:])
+        log.configure(quiet=ns.quiet)
+        return run_hor_cli(ns)
+
     args = build_parser().parse_args(argv)
     if args.processes < 1:
         print(f"--processes must be >= 1 (got {args.processes})", file=sys.stderr)
@@ -54,11 +75,11 @@ def main(argv: list[str] | None = None) -> int:
     args.output.mkdir(parents=True, exist_ok=True)
     run_pipeline(args)
 
-    # Optional HOR detection stage, on the repeat table we just wrote.
+    # "Run and done": optionally detect HORs on the table we just produced.
     if hor_requested(args):
         repeats_with_seq = args.output / f"{Path(args.fasta).name}_repeats_with_seq.csv"
         if not repeats_with_seq.exists():
             print(f"cannot run HOR: {repeats_with_seq} not found", file=sys.stderr)
             return 1
-        return 1 if run_hor_stage(args, repeats_with_seq) else 0
+        return run_hor_after_pipeline(args, repeats_with_seq)
     return 0

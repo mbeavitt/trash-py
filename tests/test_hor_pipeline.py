@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -56,6 +58,22 @@ def test_hor_plot_is_written(tmp_path: Path, monkeypatch) -> None:
     run_hor_single(args, "CP116282.1")
     png = tmp_path / "HORs_lines_178_1_CP116282.1.png"
     assert png.exists() and png.stat().st_size > 0
+
+
+@pytest.mark.skipif(shutil.which("mafft") is None, reason="mafft not installed")
+def test_hor_subcommand_auto_selects_class(tmp_path: Path) -> None:
+    """`trash-py hor <repeats> --chr-list <seq>` with no --class auto-picks the
+    most abundant class and produces the expected (byte-identical) HOR table."""
+    result = subprocess.run(
+        [sys.executable, "-m", "trash_py", "hor", str(SAMPLE_REPEATS),
+         "--chr-list", "CP116282.1", "-o", str(tmp_path), "--no-plot"],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "auto-selected class '178_1'" in result.stdout
+    got = (tmp_path / "HORs_178_1_CP116282.1.csv").read_bytes()
+    ref = (GOLD / "HORs_178_1_CP116282.1.csv").read_bytes()
+    assert got == ref
 
 
 @pytest.mark.skipif(shutil.which("mafft") is None, reason="mafft not installed")

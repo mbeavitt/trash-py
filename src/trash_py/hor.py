@@ -84,6 +84,21 @@ def read_repeats(path: Path) -> list[Repeat]:
     return out
 
 
+def class_abundance(path: Path, seq_ids: set[str] | None = None) -> "list[tuple[str, int]]":
+    """Count repeats per class (optionally restricted to `seq_ids`), most
+    abundant first. Used to auto-pick the major repeat class for HOR detection
+    when the user does not name one."""
+    import csv
+    from collections import Counter
+
+    counts: Counter[str] = Counter()
+    with Path(path).open(newline="") as f:
+        for row in csv.DictReader(f):
+            if seq_ids is None or row["seqID"] in seq_ids:
+                counts[row["class"]] += 1
+    return counts.most_common()
+
+
 def _median(values: Sequence[int]) -> float:
     s = sorted(values)
     n = len(s)
