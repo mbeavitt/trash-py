@@ -8,7 +8,7 @@ divergence — a *magnitude*, so a single perceptual sequential ramp (magma), no
 the old green→yellow→red rainbow — and drawn with alpha so overlapping panes
 blend like stained glass on a dark ground.
 
-Best-effort: we don't aim for pixel parity with the (acknowledged rough) R plot.
+Best-effort: we don't aim for pixel parity with the original R plot.
 """
 from __future__ import annotations
 
