@@ -220,11 +220,12 @@ def _resolve_class(repeats: Path, seq_ids: set[str], explicit: str | None) -> st
     ranked = class_abundance(repeats, seq_ids)
     if not ranked:
         return None
-    top_class, top_n = ranked[0]
-    runners = ", ".join(f"{c} ({n})" for c, n in ranked[1:4])
-    log.info(f"auto-selected class '{top_class}' ({top_n} repeats on "
-             f"{len(seq_ids)} sequence{'s' if len(seq_ids) != 1 else ''})"
-             + (f"; next: {runners}" if runners else ""))
+    top_class, top_n, top_bp = ranked[0]
+    runners = ", ".join(f"{c} ({bp / 1e6:.2f} Mb)" for c, _, bp in ranked[1:4])
+    log.info(f"auto-selected class '{top_class}' ({top_bp / 1e6:.2f} Mb of repeats, "
+             f"{top_n} monomers, on {len(seq_ids)} "
+             f"sequence{'s' if len(seq_ids) != 1 else ''})"
+             + (f"; next by coverage: {runners}" if runners else ""))
     return top_class
 
 

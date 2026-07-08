@@ -84,19 +84,27 @@ def read_repeats(path: Path) -> list[Repeat]:
     return out
 
 
-def class_abundance(path: Path, seq_ids: set[str] | None = None) -> "list[tuple[str, int]]":
-    """Count repeats per class (optionally restricted to `seq_ids`), most
-    abundant first. Used to auto-pick the major repeat class for HOR detection
-    when the user does not name one."""
-    import csv
-    from collections import Counter
+def class_abundance(path: Path, seq_ids: set[str] | None = None) -> "list[tuple[str, int, int]]":
+    """Rank repeat classes (optionally restricted to `seq_ids`) by total repeat
+    bp — i.e. Σ monomer width, a proxy for how much sequence the class covers.
 
-    counts: Counter[str] = Counter()
+    Returns `(class, monomer_count, total_bp)` sorted by `total_bp` (then count)
+    descending. Used to auto-pick the *major* class for HOR detection: ranking by
+    coverage rather than raw count avoids picking a short microsatellite that
+    happens to have the most monomers over the genome's real satellite."""
+    import csv
+    from collections import defaultdict
+
+    count: dict[str, int] = defaultdict(int)
+    total_bp: dict[str, int] = defaultdict(int)
     with Path(path).open(newline="") as f:
         for row in csv.DictReader(f):
             if seq_ids is None or row["seqID"] in seq_ids:
-                counts[row["class"]] += 1
-    return counts.most_common()
+                cls = row["class"]
+                count[cls] += 1
+                total_bp[cls] += int(row["width"])
+    return sorted(((c, count[c], total_bp[c]) for c in count),
+                  key=lambda t: (-t[2], -t[1], t[0]))
 
 
 def available_seqids(path: Path) -> set[str]:

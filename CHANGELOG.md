@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.2] - 2026-07-08
+
+### Changed
+
+- HOR **auto-class selection** now ranks classes by total repeat bp (Σ monomer
+  width ≈ genomic coverage) instead of raw monomer count. A short, high-count
+  microsatellite (e.g. a 13 bp repeat) no longer outranks the genome's actual
+  major satellite. The log line reports coverage, e.g. `auto-selected class
+  '43_28' (0.76 Mb of repeats, 18146 monomers, …); next by coverage: …`.
+  (A. thaliana still auto-selects `178_1`.)
+
 ## [2.3.1] - 2026-07-08
 
 ### Changed
