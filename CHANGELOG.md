@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0] - 2026-07-08
+
+### Added
+
+- **`scripts/plot_hor_table.py`** — a standalone script that renders a
+  chromosome's HOR dot-plot directly from its `HORs_<class>_<seq>.csv` table, so
+  a plot can be regenerated or tweaked without re-running detection.
+  `--label` sets the display name (e.g. `Chr3`).
+
+### Changed
+
+- **HOR plot reworked into a per-HOR dot-plot.** One translucent dot per HOR at
+  the centres of its paired blocks (block A on x, block B on y), mirrored across
+  y=x — replacing the block-to-block line segments. Tandem HORs land near the
+  diagonal, inversions on the anti-diagonal, coloured by divergence (magma) on a
+  dark ground. Axes are now labelled "HOR block A/B position", and the render is
+  2× the previous resolution.
+
 ## [2.2.0] - 2026-07-08
 
 ### Added
