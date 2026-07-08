@@ -7,8 +7,6 @@ renders a dot-plot-style view of higher order repeat pairs
 Usage:
     python scripts/plot_hor_table.py HORs_178_1_Chr3.csv
     python scripts/plot_hor_table.py HORs_178_1_Chr3.csv -o chr3.png --label Chr3 -t 25
-
-Standalone: needs only numpy and matplotlib (no trash-py install required).
 """
 from __future__ import annotations
 
