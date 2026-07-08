@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.1] - 2026-07-08
+
+### Changed
+
+- HOR detection now validates the requested sequence IDs against the repeats
+  table up front and **aborts (running nothing) if any are missing**, printing a
+  truncated list (e.g. `not running HOR identification for 3 ID(s) not in the
+  repeats table: Chr3, Chr4, Chr5`) — so requested sequences can't be silently
+  skipped.
+
 ## [2.3.0] - 2026-07-08
 
 ### Added

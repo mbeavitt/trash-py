@@ -2,9 +2,15 @@
 replacing `Rscript HORT.R` with `trash-py hor` in an existing script Just Works."""
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
-from trash_py.hor_cli import build_hor_parser
+import pytest
+
+from trash_py.hor_cli import build_hor_parser, run_hor_cli
+
+REPO = Path(__file__).resolve().parent.parent
+SAMPLE = REPO / "tests" / "data" / "hor_sample_repeats.csv"
 
 
 def test_hortr_style_flags_parse():
@@ -35,3 +41,13 @@ def test_positional_repeats_and_chr_list():
     assert ns.repeats_pos == Path("reps.csv")
     assert ns.repeats is None
     assert ns.chr_list == "Chr1,Chr2"
+
+
+@pytest.mark.skipif(shutil.which("mafft") is None, reason="mafft not installed")
+def test_missing_seqid_hard_fails(tmp_path: Path) -> None:
+    # Any requested ID absent from the table aborts the whole run (nothing run).
+    ns = build_hor_parser().parse_args(
+        [str(SAMPLE), "--chr-list", "CP116282.1,Chr99", "-o", str(tmp_path)]
+    )
+    assert run_hor_cli(ns) == 2
+    assert not list(tmp_path.glob("HORs_*.csv"))

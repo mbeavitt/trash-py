@@ -99,6 +99,14 @@ def class_abundance(path: Path, seq_ids: set[str] | None = None) -> "list[tuple[
     return counts.most_common()
 
 
+def available_seqids(path: Path) -> set[str]:
+    """The set of sequence IDs present in a repeats table."""
+    import csv
+
+    with Path(path).open(newline="") as f:
+        return {row["seqID"] for row in csv.DictReader(f)}
+
+
 def _median(values: Sequence[int]) -> float:
     s = sorted(values)
     n = len(s)

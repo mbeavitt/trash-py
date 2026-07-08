@@ -23,7 +23,19 @@ import sys
 from pathlib import Path
 
 from . import _log as log
-from .hor import HorArgs, class_abundance, run_hor_single, run_hor_pair
+from .hor import (
+    HorArgs,
+    available_seqids,
+    class_abundance,
+    run_hor_single,
+    run_hor_pair,
+)
+
+
+def _truncate(ids: list[str], limit: int = 5) -> str:
+    if len(ids) <= limit:
+        return ", ".join(ids)
+    return ", ".join(ids[:limit]) + f", … (+{len(ids) - limit} more)"
 
 
 # ---------------------------------------------------------------------------
@@ -230,6 +242,12 @@ def _run(*, repeats: Path, repeatsB: Path, output: Path, chr_list: str | None,
         if not chrA:
             print("--ChrB requires --ChrA", file=sys.stderr)
             return 2
+        missing = ([chrA] if chrA not in available_seqids(repeats) else []) \
+            + ([chrB] if chrB not in available_seqids(repeatsB) else [])
+        if missing:
+            print(f"sequence ID(s) not in the repeats table: {_truncate(missing)}",
+                  file=sys.stderr)
+            return 2
         resolved = _resolve_class(repeats, {chrA}, hor_class)
         if not resolved:
             print("could not determine a repeat class (empty table?)", file=sys.stderr)
@@ -253,6 +271,15 @@ def _run(*, repeats: Path, repeatsB: Path, output: Path, chr_list: str | None,
         chrs.append(chrA)
     seen: set[str] = set()
     chrs = [c for c in chrs if not (c in seen or seen.add(c))]
+
+    # Check requested IDs against what's actually in the table, up front, and
+    # hard-fail (running nothing) if ANY are missing — so the user can't
+    # silently miss sequences. The list is truncated to stay readable.
+    missing = [c for c in chrs if c not in available_seqids(repeats)]
+    if missing:
+        print(f"not running HOR identification for {len(missing)} ID(s) "
+              f"not in the repeats table: {_truncate(missing)}", file=sys.stderr)
+        return 2
 
     resolved = _resolve_class(repeats, set(chrs), hor_class)
     if not resolved:
