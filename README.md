@@ -78,17 +78,17 @@ trash-py -f genome.fasta -o out --hor-chr-list Chr1,Chr2,Chr3
 ```
 
 2. Standalone, to re-run HOR finding on an existing
-`<fasta>_repeats_with_seq.csv` — e.g. for a different class or set of sequences without redoing the whole pipeline:
+`<fasta>_repeats_with_seq.csv` — e.g. for a different class or set of sequences without redoing the whole pipeline. Pass `-c/--class` to target a non-primary family; in the *A. thaliana* output the most abundant classes after the `178_1` centromeric satellite are `7_4` and the 113 bp `113_15` satellite:
 
 ```
-# self-comparison HORs for several sequences
-trash-py hor out/genome.fasta_repeats_with_seq.csv --chr-list Chr1,Chr2 -o out
+# a non-primary class across several sequences
+trash-py hor out/genome.fasta_repeats_with_seq.csv -c 7_4 --chr-list Chr1,Chr2 -o out
 
-# a single sequence
-trash-py hor out/genome.fasta_repeats_with_seq.csv --ChrA Chr1 -o out
+# a single sequence, non-primary class
+trash-py hor out/genome.fasta_repeats_with_seq.csv -c 113_15 --ChrA Chr1 -o out
 
-# cross-region comparison (region A vs region B)
-trash-py hor out/genome.fasta_repeats_with_seq.csv --ChrA Chr1 --ChrB Chr2 -o out
+# cross-region comparison (region A vs region B), optionally across two families
+trash-py hor out/genome.fasta_repeats_with_seq.csv -c 7_4 -C 113_15 --ChrA Chr1 --ChrB Chr2 -o out
 ```
 
 You don't have to know the satellite class up front: **the class is optional and
