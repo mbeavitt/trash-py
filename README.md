@@ -70,16 +70,15 @@ and repeat-mapping stages across multiple worker processes.
 Higher-order-repeat (HOR) detection — the port of the upstream `HORT.R` module —
 can be run two ways.
 
-**1. Run-and-done**, as part of the main pipeline — add `--hor-chr-list` to a
-normal run and HORs are detected on the repeat table the pipeline just produced:
+1. Inline HOR detection, as part of the main pipeline — add `--hor-chr-list` to a
+normal run and HORs are detected on the repeat table the pipeline just produced, using the most abundant class of repeats (e.g. 178_1 in Arabidopsis):
 
 ```
 trash-py -f genome.fasta -o out --hor-chr-list Chr1,Chr2,Chr3
 ```
 
-**2. Standalone**, to re-run HOR finding on an existing
-`<fasta>_repeats_with_seq.csv` — e.g. for a different class or set of sequences
-— without redoing the whole pipeline:
+2. Standalone, to re-run HOR finding on an existing
+`<fasta>_repeats_with_seq.csv` — e.g. for a different class or set of sequences without redoing the whole pipeline:
 
 ```
 # self-comparison HORs for several sequences
