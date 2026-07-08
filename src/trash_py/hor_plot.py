@@ -63,8 +63,8 @@ def plot_hors(annotated: list[list], out_png: Path, chrA: str, hor_class: str,
     ax.set_xlim(lo, hi)
     ax.set_ylim(lo, hi)
     ax.set_aspect("equal")
-    ax.set_xlabel(f"{chrA}, Mbp", color=_INK)
-    ax.set_ylabel(f"{chrA}, Mbp", color=_INK)
+    ax.set_xlabel(f"HOR block A position — {chrA} (Mbp)", color=_INK)
+    ax.set_ylabel(f"HOR block B position — {chrA} (Mbp)", color=_INK)
     ax.set_title(f"HOR self-similarity — {hor_class}, {chrA}", color=_INK)
     for spine in ax.spines.values():
         spine.set_color(_GRID)
