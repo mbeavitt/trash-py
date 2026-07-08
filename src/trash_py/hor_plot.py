@@ -53,7 +53,7 @@ def plot_hors(annotated: list[list], out_png: Path, chrA: str, hor_class: str,
     lo, hi = lo - pad, hi + pad
     size = 1.0 if len(annotated) > 200_000 else (3.0 if len(annotated) > 20_000 else 8.0)
 
-    fig, ax = plt.subplots(figsize=(9, 9), dpi=130)
+    fig, ax = plt.subplots(figsize=(9, 9), dpi=260)
     fig.patch.set_facecolor(_BG)
     ax.set_facecolor(_BG)
 
