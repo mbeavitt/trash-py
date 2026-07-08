@@ -84,12 +84,7 @@ trash-py -f genome.fasta -o out --ChrA Chr1 --ChrB Chr2 -c 178_1
 
 For each sequence this writes `HORs_<class>_<seq>.csv` (the HOR table),
 `repeats_with_hors_<class>_<seq>.csv` (per-repeat annotation), and a
-`HORs_lines_<class>_<seq>.png` dot-plot. The HOR tables are reproduced
-**byte-for-byte** against the reference tool; the algorithm is a native
-reimplementation of the `HOR.V3.3` binary. `--hor-threshold` (default 25) and
-`--hor-min-len` (default 3) mirror the upstream `-t`/`-l`. HOR detection needs
-[MAFFT](https://mafft.cbrc.jp/) on `PATH`; plots need `matplotlib`
-(`pip install trash-py[plot]`). Quirks preserved from the original tool are
+`HORs_lines_<class>_<seq>.png` dot-plot. Quirks preserved from the original tool are
 documented in [`docs/HOR_source_bugs.md`](docs/HOR_source_bugs.md).
 
 ## Benchmarks
