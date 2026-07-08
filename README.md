@@ -80,7 +80,7 @@ trash-py -f genome.fasta -o out --hor-chr-list Chr1,Chr2,Chr3
 ```
 
 2. Standalone, to re-run HOR finding on an existing
-`<fasta>_repeats_with_seq.csv` — e.g. for a different class or set of sequences without redoing the whole pipeline. Pass `-c/--class` to target a non-primary family; in the *A. thaliana* output the largest satellite after the `178_1` centromere is the 113 bp `113_15` family:
+`<fasta>_repeats_with_seq.csv` without redoing the whole pipeline — handy for targeting a different class or set of sequences. `-c/--class` picks the class explicitly — any class, e.g. `178_1`, `178_2`, or, as below, the 113 bp `113_15` satellite:
 
 ```
 # a non-primary class across several sequences
