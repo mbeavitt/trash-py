@@ -333,7 +333,7 @@ def run_hor_single(args: HorArgs, chrA: str, rng_tag: float = 0.0) -> None:
             from .hor_plot import plot_hors
             plot_hors(annotated,
                       args.output_folder / f"HORs_dotplot_{args.hor_class}_{chrA}.png",
-                      chrA, args.hor_class, args.hor_threshold)
+                      chrA, args.hor_class, args.hor_threshold, repeats)
         except Exception as e:  # plots are best-effort
             log.warn(f"HOR plot failed: {e}")
     log.detail(f"wrote {out_hors.name}, {out_rep.name}")

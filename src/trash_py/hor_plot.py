@@ -1,14 +1,14 @@
 """HOR self-similarity dot-plot — a "stained-glass" rendering.
 
-Each HOR block is one translucent diagonal segment on a chromosome-vs-chromosome
-plane: parallel (tandem) HORs lie along the main diagonal, antiparallel
-(inverted) HORs along the anti-diagonal, and the plane is mirrored across y=x so
-the plot is the familiar symmetric self-dot-plot. Segments are coloured by
-divergence — a *magnitude*, so a single perceptual sequential ramp (magma), not
-the old green→yellow→red rainbow — and drawn with alpha so overlapping panes
-blend like stained glass on a dark ground.
+One translucent dot per matched repeat *unit*: within each HOR the paired
+monomers (A_u ↔ B_u) become individual points, so a HOR reads as a run of dots
+along a diagonal — tandem HORs on the main diagonal, inverted-repeat HORs on the
+anti-diagonal — and the plane is mirrored across y=x for the symmetric self-plot.
+Dots are coloured by divergence — a *magnitude*, so a single perceptual
+sequential ramp (magma), not the old green→yellow→red rainbow — with alpha so
+dense regions blend like stained glass on a dark ground.
 
-Best-effort: we don't aim for pixel parity with the (acknowledged rough) R plot.
+Best-effort: we don't aim for pixel parity with the original R plot.
 """
 from __future__ import annotations
 
@@ -21,58 +21,69 @@ _GRID = "#2a2a33"
 
 
 def plot_hors(annotated: list[list], out_png: Path, chrA: str, hor_class: str,
-              threshold: int, unit_val: float = 1_000_000.0) -> None:
+              threshold: int, repeats, unit_val: float = 1_000_000.0) -> None:
     import numpy as np
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    from matplotlib.collections import LineCollection
 
     if not annotated:
         return
 
+    # Genomic midpoint (bp) of each repeat, indexed by its 1-based unit number.
+    mid = np.array([(r.start + r.end) / 2.0 for r in repeats], dtype=float)
+
     a = np.asarray(
-        [(r[6], r[7], r[8], r[9], r[4], r[15]) for r in annotated], dtype=float
+        [(r[0], r[1], r[2], r[3], r[4], r[15]) for r in annotated], dtype=np.int64
     )
-    sA, sB, eA, eB, direction, snv = (a[:, 0], a[:, 1], a[:, 2], a[:, 3],
-                                      a[:, 4], a[:, 5])
-    sA, sB, eA, eB = (x / unit_val for x in (sA, sB, eA, eB))
+    start_A, end_A, start_B, end_B, direction = (a[:, i] for i in range(5))
+    snv = a[:, 5].astype(float)
+    ks = (end_A - start_A + 1).astype(np.int64)     # units per HOR
 
-    # Parallel HORs run start->end on both axes; antiparallel are drawn along the
-    # anti-diagonal (flip the B ends) so inverted repeats read as the other slope.
-    para = direction == 1
-    p0x, p0y = sA, np.where(para, sB, eB)
-    p1x, p1y = eA, np.where(para, eB, sB)
+    # Ragged expansion: one row per (HOR, unit). `off` is the within-HOR unit u.
+    n = int(ks.sum())
+    off = np.arange(n) - np.repeat(ks.cumsum() - ks, ks)
+    rA = np.repeat(start_A, ks) + off                # A monomer index (1-based)
+    dirr = np.repeat(direction, ks)
+    # parallel pairs A_u with B_u (start_B+u); antiparallel with B reversed (end_B-u)
+    rB = np.where(dirr == 1, np.repeat(start_B, ks) + off, np.repeat(end_B, ks) - off)
+    snv = np.repeat(snv, ks)
 
-    # Segments + their mirror across y = x -> symmetric self-dot-plot.
-    seg = np.stack([np.column_stack([p0x, p0y]), np.column_stack([p1x, p1y])], axis=1)
-    seg_m = seg[:, :, ::-1]
-    segments = np.concatenate([seg, seg_m], axis=0)
+    # Satellite arrays can yield tens of millions of unit-pairs (Chr1 178_1:
+    # ~70M) — far too many to scatter. Subsample to a representative cloud.
+    # (A proper fix is a 2D density raster; see TODO in the branch.)
+    cap = 1_500_000
+    if n > cap:
+        rng = np.random.default_rng(0)
+        pick = rng.choice(n, size=cap, replace=False)
+        rA, rB, snv = rA[pick], rB[pick], snv[pick]
+        n = cap
+
+    xa = mid[rA - 1] / unit_val
+    yb = mid[rB - 1] / unit_val
+    xs = np.concatenate([xa, yb])
+    ys = np.concatenate([yb, xa])
 
     # Colour by divergence (low = bright/hot, high = dim), magma on dark ground.
     vmax = max(threshold * 10, 1e-9)
     t = np.clip(np.concatenate([snv, snv]) / vmax, 0.0, 1.0)
-    cmap = plt.get_cmap("magma")
-    colors = cmap(1.0 - t)                 # conserved HORs glow, divergent recede
-    colors[:, 3] = 0.55                     # alpha -> stained-glass blend
+    colors = plt.get_cmap("magma")(1.0 - t)     # conserved HORs glow, divergent recede
+    colors[:, 3] = 0.5                           # alpha -> stained-glass blend
 
     # Zoom to the occupied region (HORs only form inside the satellite array, so
     # most of the chromosome is empty) — a square window with a small margin.
-    lo = float(min(sA.min(), sB.min(), eA.min(), eB.min()))
-    hi = float(max(sA.max(), sB.max(), eA.max(), eB.max()))
+    lo, hi = float(min(xs.min(), ys.min())), float(max(xs.max(), ys.max()))
     pad = 0.02 * (hi - lo) if hi > lo else 1.0
     lo, hi = lo - pad, hi + pad
-    lw = 0.6 if len(annotated) > 200_000 else (1.0 if len(annotated) > 20_000 else 1.6)
+    size = 0.5 if n > 1_000_000 else (1.5 if n > 100_000 else 6.0)
 
     fig, ax = plt.subplots(figsize=(9, 9), dpi=130)
     fig.patch.set_facecolor(_BG)
     ax.set_facecolor(_BG)
 
-    lc = LineCollection(segments, colors=colors, linewidths=lw, capstyle="round")
-    lc.set_rasterized(True)                 # keep the PNG small/fast with ~10^6 panes
-    ax.add_collection(lc)
-
     ax.plot([lo, hi], [lo, hi], color=_GRID, lw=0.8, zorder=0)  # main diagonal
+    sc = ax.scatter(xs, ys, s=size, c=colors, marker="o", linewidths=0)
+    sc.set_rasterized(True)                     # keep the PNG small/fast with ~10^6 dots
     ax.set_xlim(lo, hi)
     ax.set_ylim(lo, hi)
     ax.set_aspect("equal")
