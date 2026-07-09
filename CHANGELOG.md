@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.0] - 2026-07-09
+
+### Changed
+
+- **CLI clarity pass — no flags removed, everything still parses.** The
+  higher-order-repeat surface was confusing for new users; this cleans it up
+  without breaking the HORT.R drag-and-drop contract.
+  - The `hor` subcommand is now **listed under `trash-py --help`** (previously it
+    was dispatched invisibly), and `trash-py hor` with no arguments prints its
+    help instead of a terse one-liner.
+  - `trash-py hor --help` is **decluttered**: it shows a compact canonical set and
+    hides the HORT.R-compat aliases (`-r`, `--output_folder`, `-m/--method`,
+    `-s/--saveR`, `-p/--plot-simple`, lowercase `--chrA`/`--chrB`, underscore
+    long-names). All of them still parse; they're just no longer in the listing.
+  - New canonical spellings **`-t/--threshold`** and **`-l/--min-len`** (the older
+    `--hor-threshold`/`--hor-min-len`/underscore forms remain as hidden aliases).
+  - The main pipeline's HOR options keep their `--hor-*` prefix, and the help now
+    frames them explicitly as **a separate second stage** that runs after array
+    identification — so a `--hor-*` option is never mistaken for a setting on the
+    tandem-repeat step.
+  - Redundant/duplicate aliases (e.g. `--chrA` vs `--ChrA`) now emit a one-line
+    **deprecation nudge** on stderr but continue to work. Genuine HORT.R flags stay
+    silent.
+  - Error messages from the shared HOR runner now name the flags for the context
+    they were reached from (`--ChrA`/`--ChrB` for the subcommand,
+    `--hor-ChrA`/`--hor-ChrB` for the pipeline).
+
 ## [2.4.0] - 2026-07-08
 
 ### Performance

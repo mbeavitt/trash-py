@@ -38,35 +38,76 @@ def _truncate(ids: list[str], limit: int = 5) -> str:
     return ", ".join(ids[:limit]) + f", … (+{len(ids) - limit} more)"
 
 
+# Redundant spellings that trash-py itself introduced (a canonical form is
+# preferred). We keep parsing them but nudge users toward the canonical name.
+# The genuine upstream HORT.R getopt surface (-r, --output_folder, --ChrA,
+# -m/--method, -s/--saveR, --plot_simple) is deliberately NOT listed here: it is
+# the drag-and-drop contract and stays silent.
+_DEPRECATED_ALIASES = {
+    "--chrA": "--ChrA",
+    "--chrB": "--ChrB",
+    "--hor-chr-list": "--chr-list",
+    "--hor-threshold": "--threshold",
+    "--hor_threshold": "--threshold",
+    "--hor-min-len": "--min-len",
+    "--hor_min_len": "--min-len",
+}
+
+
+def warn_deprecated_aliases(argv: list[str]) -> None:
+    """Emit a one-line nudge for each redundant alias present in `argv`. Purely
+    advisory — the aliases still work; this just points at the canonical name."""
+    seen: set[str] = set()
+    for tok in argv:
+        # handle both `--alias value` and `--alias=value`
+        name = tok.split("=", 1)[0]
+        canonical = _DEPRECATED_ALIASES.get(name)
+        if canonical and name not in seen:
+            seen.add(name)
+            log.warn(f"{name} is deprecated; use {canonical} instead "
+                     "(the old name still works for now)")
+
+
 # ---------------------------------------------------------------------------
 # Main-pipeline integration: HOR options on the top-level parser
 # ---------------------------------------------------------------------------
 
 def add_hor_arguments(p: argparse.ArgumentParser) -> None:
     """Add the (all ``--hor-``-prefixed) HOR options to the main pipeline parser.
-    Passing ``--hor-chr-list`` or ``--hor-ChrA`` turns HOR detection on."""
-    g = p.add_argument_group("HOR detection (optional; runs after the main pipeline)")
+    Passing ``--hor-chr-list`` or ``--hor-ChrA`` turns HOR detection on.
+
+    The ``--hor-`` prefix is deliberate: it makes clear that these options
+    configure a *separate second stage* that runs only after array identification
+    finishes — they do not change the tandem-repeat steps above."""
+    g = p.add_argument_group(
+        "HOR detection — a SEPARATE second stage",
+        "These options configure higher-order-repeat detection, which runs only "
+        "AFTER array identification finishes. They do not affect the tandem-repeat "
+        "steps above. Pass --hor-chr-list (or --hor-ChrA) to turn the stage on. "
+        "To run HOR detection on its own on an existing table, see `trash-py hor --help`.")
     g.add_argument("--hor-chr-list", dest="chr_list",
                    help="comma-separated sequence IDs — detect HORs (self-comparison) "
-                        "for each. The common way to turn HOR detection on.")
+                        "for each. The common way to turn the HOR stage on.")
     g.add_argument("--hor-ChrA", dest="chrA",
-                   help="single sequence ID for HOR detection (region A if --hor-ChrB given)")
+                   help="HOR stage: single sequence ID (region A if --hor-ChrB given)")
     g.add_argument("--hor-ChrB", dest="chrB",
-                   help="region B sequence ID — enables cross-region comparison")
+                   help="HOR stage: region B sequence ID — enables cross-region comparison")
     g.add_argument("--hor-class", dest="hor_class",
-                   help="repeat class to analyse (default: most abundant on the targets)")
+                   help="HOR stage: repeat class to analyse (default: most abundant on the targets)")
     g.add_argument("--hor-classB", dest="classB",
-                   help="region-B repeat class (default: same as --hor-class)")
+                   help="HOR stage: region-B repeat class (default: same as --hor-class)")
     g.add_argument("--hor-threshold", dest="hor_threshold", type=int, default=25,
-                   help="HOR divergence threshold %% (default 25)")
+                   help="HOR stage: divergence threshold %% (default 25)")
     g.add_argument("--hor-min-len", dest="hor_min_len", type=int, default=3,
-                   help="minimum HOR length in repeat units (default 3)")
-    g.add_argument("--hor-genomeA", dest="genomeA", default="A", help="label for genome A")
-    g.add_argument("--hor-genomeB", dest="genomeB", default="B", help="label for genome B")
+                   help="HOR stage: minimum HOR length in repeat units (default 3)")
+    g.add_argument("--hor-genomeA", dest="genomeA", default="A",
+                   help="HOR stage: label for genome A")
+    g.add_argument("--hor-genomeB", dest="genomeB", default="B",
+                   help="HOR stage: label for genome B")
     g.add_argument("--no-hor-plot", dest="no_plot", action="store_true",
-                   help="skip the HOR line plot")
+                   help="HOR stage: skip the HOR line plot")
     g.add_argument("--no-hor-saveR", dest="no_saveR", action="store_true",
-                   help="--hor-ChrB mode only: skip writing repeats_with_hors")
+                   help="HOR stage (--hor-ChrB mode only): skip writing repeats_with_hors")
 
 
 def hor_requested(args: argparse.Namespace) -> bool:
@@ -96,12 +137,29 @@ def run_hor_after_pipeline(args: argparse.Namespace, repeats_path: Path) -> int:
         make_plot=not args.no_plot,
         saveR=not args.no_saveR,
         threads=getattr(args, "processes", 1) or 1,
+        chrA_flag="--hor-ChrA", chrB_flag="--hor-ChrB", chr_list_flag="--hor-chr-list",
     )
 
 
 # ---------------------------------------------------------------------------
 # Standalone subcommand: `trash-py hor <repeats_with_seq.csv> ...`
 # ---------------------------------------------------------------------------
+
+_HOR_EPILOG = """\
+examples:
+  # detect HORs on one or more sequences (self-comparison)
+  trash-py hor out/genome.fasta_repeats_with_seq.csv --chr-list Chr1,Chr2 -o out
+
+  # a single sequence, explicit repeat class
+  trash-py hor out/genome.fasta_repeats_with_seq.csv --ChrA Chr1 -c 178_1 -o out
+
+  # cross-region comparison (region A vs region B)
+  trash-py hor out/genome.fasta_repeats_with_seq.csv --ChrA Chr1 --ChrB Chr2 -o out
+
+Legacy HORT.R flags (-r, --output_folder, --chrA, -m/--method, -s/--saveR,
+--plot_simple, …) are still accepted for drag-and-drop compatibility.
+"""
+
 
 def build_hor_parser() -> argparse.ArgumentParser:
     """The standalone HOR parser. Accepts the full upstream ``HORT.R`` getopt
@@ -111,44 +169,35 @@ def build_hor_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="trash-py hor",
         description="TRASH HOR module — detect higher-order repeats in a repeat table.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=_HOR_EPILOG,
     )
-    # The repeats table: positional *or* -r/--repeats (HORT.R used -r).
+    # The repeats table: positional (preferred) or the hidden HORT.R -r/--repeats.
     p.add_argument("repeats_pos", nargs="?", type=Path, metavar="repeats",
-                   help="repeat table with a sequence column (…_repeats_with_seq.csv); "
-                        "may also be given with -r/--repeats")
-    p.add_argument("-r", "--repeats", dest="repeats", type=Path, default=None,
-                   help="repeat table (HORT.R-compatible alternative to the positional arg)")
-    p.add_argument("-o", "--output", "--output_folder", dest="output",
-                   type=Path, default=Path.cwd(),
+                   help="repeat table with a sequence column (…_repeats_with_seq.csv)")
+    p.add_argument("-o", "--output", dest="output", type=Path, default=Path.cwd(),
                    help="output folder (default: current directory)")
     p.add_argument("-c", "--class", dest="hor_class", default=None,
                    help="repeat class to analyse (e.g. 178_1); "
                         "default: the most abundant class on the target sequences")
-    p.add_argument("-t", "--hor-threshold", "--hor_threshold", dest="hor_threshold",
-                   type=int, default=25, help="divergence threshold %% (default 25)")
-    p.add_argument("-l", "--hor-min-len", "--hor_min_len", dest="hor_min_len",
-                   type=int, default=3, help="minimum HOR length in repeat units (default 3)")
-    p.add_argument("-m", "--method", type=int, choices=(1, 2), default=None,
-                   help="1 = self-comparison, 2 = cross-region (usually inferred from --ChrB)")
-    p.add_argument("--chr-list", "--hor-chr-list", dest="chr_list",
-                   help="comma-separated sequence IDs — self-comparison (method 1) for each")
-    p.add_argument("-A", "--ChrA", "--chrA", dest="chrA",
-                   help="single sequence ID for method 1 (or region A of method 2)")
-    p.add_argument("-B", "--ChrB", "--chrB", dest="chrB",
-                   help="region B sequence ID — enables cross-region comparison (method 2)")
-    p.add_argument("-b", "--repeatsB", dest="repeatsB", type=Path,
-                   help="region-B repeats table (default: same as the main repeats file)")
+    p.add_argument("--chr-list", dest="chr_list",
+                   help="comma-separated sequence IDs — one self-comparison per ID")
+    p.add_argument("-A", "--ChrA", dest="chrA",
+                   help="single sequence ID (region A if --ChrB is also given)")
+    p.add_argument("-B", "--ChrB", dest="chrB",
+                   help="region B sequence ID — enables cross-region comparison")
     p.add_argument("-C", "--classB", dest="classB",
                    help="region-B repeat class (default: same as --class)")
+    p.add_argument("-b", "--repeatsB", dest="repeatsB", type=Path,
+                   help="region-B repeats table (default: same as the main repeats file)")
+    p.add_argument("-t", "--threshold", dest="hor_threshold", type=int, default=25,
+                   help="divergence threshold %% (default 25)")
+    p.add_argument("-l", "--min-len", dest="hor_min_len", type=int, default=3,
+                   help="minimum HOR length in repeat units (default 3)")
     p.add_argument("-g", "--genomeA", dest="genomeA", default="A",
                    help="label for genome A (--ChrB mode)")
     p.add_argument("-G", "--genomeB", dest="genomeB", default="B",
                    help="label for genome B (--ChrB mode)")
-    p.add_argument("-s", "--saveR", dest="saveR", choices=("y", "n"), default=None,
-                   help="--ChrB mode: write repeats_with_hors (y/n)")
-    p.add_argument("-p", "--plot-simple", "--plot_simple", dest="plot_simple",
-                   choices=("y", "n"), default=None,
-                   help="accepted for HORT.R compatibility (a plot is always produced)")
     p.add_argument("--no-plot", dest="no_plot", action="store_true",
                    help="skip the HOR plot")
     p.add_argument("--no-saveR", dest="no_saveR", action="store_true",
@@ -156,18 +205,46 @@ def build_hor_parser() -> argparse.ArgumentParser:
     p.add_argument("-T", "--threads", type=int, default=None,
                    help="MAFFT threads (default: all available cores)")
     p.add_argument("-q", "--quiet", action="store_true", help="suppress progress output")
+
+    # Hidden aliases: the upstream HORT.R getopt surface plus earlier trash-py
+    # spellings. All still parse (drag-and-drop compatibility) but are kept out
+    # of --help to reduce clutter. default=SUPPRESS so they don't clobber the
+    # canonical option's default when absent.
+    S = argparse.SUPPRESS
+    p.add_argument("-r", "--repeats", dest="repeats", type=Path, default=None, help=S)
+    p.add_argument("--output_folder", dest="output", type=Path, default=S, help=S)
+    p.add_argument("--hor-threshold", "--hor_threshold", dest="hor_threshold",
+                   type=int, default=S, help=S)
+    p.add_argument("--hor-min-len", "--hor_min_len", dest="hor_min_len",
+                   type=int, default=S, help=S)
+    p.add_argument("--hor-chr-list", dest="chr_list", default=S, help=S)
+    p.add_argument("--chrA", dest="chrA", default=S, help=S)
+    p.add_argument("--chrB", dest="chrB", default=S, help=S)
+    p.add_argument("-m", "--method", type=int, choices=(1, 2), default=None, help=S)
+    p.add_argument("-s", "--saveR", dest="saveR", choices=("y", "n"), default=None, help=S)
+    p.add_argument("-p", "--plot-simple", "--plot_simple", dest="plot_simple",
+                   choices=("y", "n"), default=None, help=S)
     return p
 
 
-def run_hor_cli(ns: argparse.Namespace) -> int:
+def run_hor_cli(ns: argparse.Namespace,
+                parser: argparse.ArgumentParser | None = None) -> int:
     """Entry point for the standalone `trash-py hor` subcommand."""
     repeats = ns.repeats or ns.repeats_pos
     if repeats is None:
-        print("no repeats table given (pass it positionally or with -r/--repeats)",
-              file=sys.stderr)
+        # No table at all: the user most likely just typed `trash-py hor` — show
+        # help rather than a terse one-liner.
+        if parser is not None:
+            parser.print_help(sys.stderr)
+        else:
+            print("no repeats table given (pass it positionally or with -r/--repeats)",
+                  file=sys.stderr)
         return 2
     if not repeats.exists():
         print(f"repeats file not found: {repeats}", file=sys.stderr)
+        return 2
+    if not (ns.chr_list or ns.chrA):
+        print("specify --chr-list, or --ChrA (optionally with --ChrB)", file=sys.stderr)
         return 2
     if shutil.which("mafft") is None:
         print("mafft not found on PATH — install it (e.g. `conda install -c bioconda mafft`)",
@@ -232,16 +309,18 @@ def _resolve_class(repeats: Path, seq_ids: set[str], explicit: str | None) -> st
 def _run(*, repeats: Path, repeatsB: Path, output: Path, chr_list: str | None,
          chrA: str | None, chrB: str | None, hor_class: str | None, classB: str | None,
          hor_threshold: int, hor_min_len: int, genomeA: str, genomeB: str,
-         make_plot: bool, saveR: bool, threads: int = 1) -> int:
+         make_plot: bool, saveR: bool, threads: int = 1,
+         chrA_flag: str = "--ChrA", chrB_flag: str = "--ChrB",
+         chr_list_flag: str = "--chr-list") -> int:
     if not chr_list and not chrA:
-        print("specify --hor-chr-list, or --hor-ChrA (optionally with --hor-ChrB)",
+        print(f"specify {chr_list_flag}, or {chrA_flag} (optionally with {chrB_flag})",
               file=sys.stderr)
         return 2
 
     # cross-region comparison (method 2)
     if chrB:
         if not chrA:
-            print("--ChrB requires --ChrA", file=sys.stderr)
+            print(f"{chrB_flag} requires {chrA_flag}", file=sys.stderr)
             return 2
         missing = ([chrA] if chrA not in available_seqids(repeats) else []) \
             + ([chrB] if chrB not in available_seqids(repeatsB) else [])

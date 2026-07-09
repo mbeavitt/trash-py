@@ -147,6 +147,8 @@ BibTeX:
 $ trash-py --help
 usage: trash-py [-h] [-V] -f FASTA -o OUTPUT [-m MAX_REP_SIZE]
                 [-i MIN_REP_SIZE] [-t TEMPLATES] [-q] [-p PROCESSES]
+                [--hor-chr-list CHR_LIST] [--hor-ChrA CHRA] ...
+                {hor} ...
 
 TRASH — tandem-repeat array identifier (Python)
 
@@ -164,4 +166,20 @@ options:
   -p, --processes PROCESSES
                         parallel worker processes for the array-identification
                         and repeat-mapping stages (default 1 = serial)
+
+HOR detection — a SEPARATE second stage:
+  These options (all --hor-* prefixed) configure higher-order-repeat detection,
+  which runs only AFTER array identification finishes. Pass --hor-chr-list (or
+  --hor-ChrA) to turn the stage on. See the full list with `trash-py --help`.
+
+subcommands:
+  {hor}
+    hor                 detect higher-order repeats on an existing repeat table
+                        (standalone; see `trash-py hor --help`)
 ```
+
+The `--hor-*` prefix is deliberate: a `--hor-*` option always configures the
+downstream HOR stage, never the tandem-repeat identification above it. For a
+HOR-only run on a table you already have, the standalone `trash-py hor`
+subcommand takes the un-prefixed forms (`--threshold`, `--min-len`, `--ChrA`,
+…) — run `trash-py hor --help` for its reference.

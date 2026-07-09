@@ -20,12 +20,19 @@ from .hor_cli import (
     hor_requested,
     run_hor_after_pipeline,
     run_hor_cli,
+    warn_deprecated_aliases,
 )
 
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog="trash-py", description="TRASH — tandem-repeat array identifier (Python)"
+        prog="trash-py",
+        description="TRASH — tandem-repeat array identifier (Python)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="The --hor-* options above configure an optional HOR-detection stage "
+               "that runs only AFTER array identification finishes.\n"
+               "To run HOR detection on its own on an existing repeat table, use the "
+               "`hor` subcommand:  trash-py hor --help",
     )
     p.add_argument(
         "-V", "--version", action="version", version=f"trash-py {__version__}"
@@ -51,6 +58,15 @@ def build_parser() -> argparse.ArgumentParser:
         "repeat-mapping stages (default 1 = serial)",
     )
     add_hor_arguments(p)
+
+    # Register `hor` so it shows up under `trash-py --help`. Actual parsing of
+    # `trash-py hor ...` is handled by the manual dispatch in main() (which owns
+    # the full HORT.R-compatible parser); this stub exists only for discoverability.
+    sub = p.add_subparsers(title="subcommands")
+    sub.add_parser(
+        "hor", add_help=False,
+        help="detect higher-order repeats on an existing repeat table "
+             "(standalone; see `trash-py hor --help`)")
     return p
 
 
@@ -60,9 +76,11 @@ def main(argv: list[str] | None = None) -> int:
     # `trash-py hor ...` is a separate subcommand for HOR detection; everything
     # else is the original tandem-repeat pipeline, unchanged.
     if argv and argv[0] == "hor":
-        ns = build_hor_parser().parse_args(argv[1:])
+        hor_parser = build_hor_parser()
+        ns = hor_parser.parse_args(argv[1:])
         log.configure(quiet=ns.quiet)
-        return run_hor_cli(ns)
+        warn_deprecated_aliases(argv[1:])
+        return run_hor_cli(ns, hor_parser)
 
     args = build_parser().parse_args(argv)
     if args.processes < 1:

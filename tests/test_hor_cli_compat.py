@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from trash_py.hor_cli import build_hor_parser, run_hor_cli
+from trash_py.hor_cli import build_hor_parser, run_hor_cli, warn_deprecated_aliases
 
 REPO = Path(__file__).resolve().parent.parent
 SAMPLE = REPO / "tests" / "data" / "hor_sample_repeats.csv"
@@ -41,6 +41,38 @@ def test_positional_repeats_and_chr_list():
     assert ns.repeats_pos == Path("reps.csv")
     assert ns.repeats is None
     assert ns.chr_list == "Chr1,Chr2"
+
+
+def test_canonical_threshold_and_min_len_parse():
+    # The clean names shown in --help map to the same dests as the legacy flags.
+    ns = build_hor_parser().parse_args(
+        ["reps.csv", "--threshold", "30", "--min-len", "4"]
+    )
+    assert ns.hor_threshold == 30 and ns.hor_min_len == 4
+
+
+def test_hor_listed_as_subcommand():
+    # `hor` shows up in the main parser's help (discoverability).
+    from trash_py.cli import build_parser
+    assert "hor" in build_parser().format_help()
+
+
+def test_deprecated_alias_warns_but_canonical_is_silent(capsys):
+    warn_deprecated_aliases(["--chrA", "Chr1", "--ChrA", "Chr2", "-r", "x.csv"])
+    err = capsys.readouterr().err
+    assert "--chrA is deprecated" in err
+    assert "use --ChrA" in err
+    # Canonical --ChrA and the genuine HORT.R -r must NOT be flagged.
+    assert "--ChrA is deprecated" not in err
+    assert "-r is deprecated" not in err
+
+
+def test_hor_no_table_prints_help(capsys):
+    parser = build_hor_parser()
+    ns = parser.parse_args([])
+    assert run_hor_cli(ns, parser) == 2
+    out = capsys.readouterr()
+    assert "usage: trash-py hor" in out.err
 
 
 @pytest.mark.skipif(shutil.which("mafft") is None, reason="mafft not installed")
