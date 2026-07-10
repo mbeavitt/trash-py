@@ -24,7 +24,7 @@ can be incorporated into diverse repeat-annotation related workflows beyond
 simply running the TRASH pipeline, and the hotter functions have been ported to
 C to maximise performance.
 
-Currently, on smaller less repetitive genomes (e.g. Arabidopsis, Human genome)
+Currently, on smaller or less repetitive genomes (e.g. Arabidopsis, Human genome)
 the bottleneck is nhmmer rather than the the TRASH pipeline itself, which takes
 a fraction of the original time to complete.
 
