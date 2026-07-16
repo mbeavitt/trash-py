@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.1] - 2026-07-16
+
+### Fixed
+
+- **More informative HOR abort errors.** When HOR identification is aborted because requested sequence IDs are missing from the repeats table, the tool now prints an explicit `ERROR:` message stating that it is skipping all HOR identification, specifies the repeat class (species of HOR) being trialled, and lists the missing IDs.
+
 ## [2.5.0] - 2026-07-09
 
 ### Changed
@@ -236,3 +242,4 @@ logic of the upstream pipeline.
   external tool like GNU Parallel, and merge later.
 
 [1.0.0]: https://github.com/mbeavitt/trash-py/releases/tag/v1.0.0
+[2.5.1]: https://github.com/mbeavitt/trash-py/releases/tag/v2.5.1

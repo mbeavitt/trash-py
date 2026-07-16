@@ -158,6 +158,10 @@ def warn(msg: str) -> None:
     print(f"warning: {msg}", file=sys.stderr)
 
 
+def error(msg: str) -> None:
+    print(f"ERROR: {msg}", file=sys.stderr)
+
+
 def format_elapsed(seconds: float) -> str:
     if seconds < 60:
         return f"{seconds:.1f}s"

@@ -76,10 +76,13 @@ def test_hor_no_table_prints_help(capsys):
 
 
 @pytest.mark.skipif(shutil.which("mafft") is None, reason="mafft not installed")
-def test_missing_seqid_hard_fails(tmp_path: Path) -> None:
+def test_missing_seqid_hard_fails(tmp_path: Path, capsys) -> None:
     # Any requested ID absent from the table aborts the whole run (nothing run).
     ns = build_hor_parser().parse_args(
         [str(SAMPLE), "--chr-list", "CP116282.1,Chr99", "-o", str(tmp_path)]
     )
     assert run_hor_cli(ns) == 2
     assert not list(tmp_path.glob("HORs_*.csv"))
+    err = capsys.readouterr().err
+    assert "ERROR: skipping all HOR identification of class '178_1'" in err
+    assert "requested sequence ID(s) are not in the repeats table: Chr99" in err

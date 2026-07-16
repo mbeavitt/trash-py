@@ -324,13 +324,14 @@ def _run(*, repeats: Path, repeatsB: Path, output: Path, chr_list: str | None,
             return 2
         missing = ([chrA] if chrA not in available_seqids(repeats) else []) \
             + ([chrB] if chrB not in available_seqids(repeatsB) else [])
-        if missing:
-            print(f"sequence ID(s) not in the repeats table: {_truncate(missing)}",
-                  file=sys.stderr)
-            return 2
         resolved = _resolve_class(repeats, {chrA}, hor_class)
+        if missing:
+            cls_str = f" of class '{resolved}'" if resolved else ""
+            log.error(f"skipping all HOR identification{cls_str}: sequence ID(s) "
+                      f"not in the repeats table: {_truncate(missing)}")
+            return 2
         if not resolved:
-            print("could not determine a repeat class (empty table?)", file=sys.stderr)
+            log.error("skipping all HOR identification: could not determine a repeat class (empty table?)")
             return 2
         args = HorArgs(repeats=repeats, output_folder=output, hor_class=resolved,
                        hor_threshold=hor_threshold, hor_min_len=hor_min_len,
@@ -352,18 +353,21 @@ def _run(*, repeats: Path, repeatsB: Path, output: Path, chr_list: str | None,
     seen: set[str] = set()
     chrs = [c for c in chrs if not (c in seen or seen.add(c))]
 
+    # Resolve the repeat class (species of HOR) to analyse
+    resolved = _resolve_class(repeats, set(chrs), hor_class)
+
     # Check requested IDs against what's actually in the table, up front, and
     # hard-fail (running nothing) if ANY are missing — so the user can't
     # silently miss sequences. The list is truncated to stay readable.
     missing = [c for c in chrs if c not in available_seqids(repeats)]
     if missing:
-        print(f"not running HOR identification for {len(missing)} ID(s) "
-              f"not in the repeats table: {_truncate(missing)}", file=sys.stderr)
+        cls_str = f" of class '{resolved}'" if resolved else ""
+        log.error(f"skipping all HOR identification{cls_str}: the following {len(missing)} "
+                  f"requested sequence ID(s) are not in the repeats table: {_truncate(missing)}")
         return 2
 
-    resolved = _resolve_class(repeats, set(chrs), hor_class)
     if not resolved:
-        print("could not determine a repeat class (empty table?)", file=sys.stderr)
+        log.error("skipping all HOR identification: could not determine a repeat class (empty table?)")
         return 2
     args = HorArgs(repeats=repeats, output_folder=output, hor_class=resolved,
                    hor_threshold=hor_threshold, hor_min_len=hor_min_len, make_plot=make_plot, threads=threads)
