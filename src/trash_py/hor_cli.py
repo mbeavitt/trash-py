@@ -96,8 +96,8 @@ def add_hor_arguments(p: argparse.ArgumentParser) -> None:
                    help="HOR stage: repeat class to analyse (default: most abundant on the targets)")
     g.add_argument("--hor-classB", dest="classB",
                    help="HOR stage: region-B repeat class (default: same as --hor-class)")
-    g.add_argument("--hor-threshold", dest="hor_threshold", type=int, default=25,
-                   help="HOR stage: divergence threshold %% (default 25)")
+    g.add_argument("--hor-threshold", dest="hor_threshold", type=int, default=4,
+                   help="HOR stage: divergence threshold %% (default 4)")
     g.add_argument("--hor-min-len", dest="hor_min_len", type=int, default=3,
                    help="HOR stage: minimum HOR length in repeat units (default 3)")
     g.add_argument("--hor-genomeA", dest="genomeA", default="A",
@@ -190,8 +190,8 @@ def build_hor_parser() -> argparse.ArgumentParser:
                    help="region-B repeat class (default: same as --class)")
     p.add_argument("-b", "--repeatsB", dest="repeatsB", type=Path,
                    help="region-B repeats table (default: same as the main repeats file)")
-    p.add_argument("-t", "--threshold", dest="hor_threshold", type=int, default=25,
-                   help="divergence threshold %% (default 25)")
+    p.add_argument("-t", "--threshold", dest="hor_threshold", type=int, default=4,
+                   help="divergence threshold %% (default 4)")
     p.add_argument("-l", "--min-len", dest="hor_min_len", type=int, default=3,
                    help="minimum HOR length in repeat units (default 3)")
     p.add_argument("-g", "--genomeA", dest="genomeA", default="A",

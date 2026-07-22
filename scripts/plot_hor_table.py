@@ -106,8 +106,8 @@ def main() -> None:
                    help="sequence name for the axes/title (default: chrA from the table)")
     p.add_argument("-c", "--class", dest="hor_class",
                    help="repeat class for the title (default: parsed from the filename)")
-    p.add_argument("-t", "--threshold", type=int, default=25,
-                   help="HOR threshold used, which sets the colour scale (default 25)")
+    p.add_argument("-t", "--threshold", type=int, default=4,
+                   help="HOR threshold used, which sets the colour scale (default 4)")
     args = p.parse_args()
 
     xa, yb, snv, seq_id = read_table(args.table)

@@ -337,7 +337,7 @@ class HorArgs:
     repeats: Path
     output_folder: Path
     hor_class: str
-    hor_threshold: int = 25
+    hor_threshold: int = 4
     hor_min_len: int = 3
     make_plot: bool = True
     threads: int = 1

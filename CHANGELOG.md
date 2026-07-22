@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **The HOR divergence threshold now defaults to 4%, down from 25%.** This
+  affects `--hor-threshold` on the main pipeline, `-t/--threshold` on
+  `trash-py hor`, and the colour scale in `scripts/plot_hor_table.py`. The
+  default is now a stringent HOR definition rather than upstream HORT.R's
+  permissive one.
+
+  **This changes output for anyone who does not pass the flag explicitly.** The
+  threshold is a percentage of the median repeat width, so for a 178 bp monomer
+  it moves `threshold_SNV` from 44 to 7; on the test sample that takes the HOR
+  count from 77 to 58. Pass `-t 25` (or `--hor-threshold 25`) to restore the
+  previous behaviour.
+
+  Golden-file and upstream-parity tests now pin `hor_threshold=25` explicitly,
+  since the reference outputs they compare against were generated at that
+  threshold.
+
 ## [2.5.1] - 2026-07-16
 
 ### Fixed

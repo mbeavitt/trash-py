@@ -5,6 +5,11 @@ MAFFT version) and requires the produced HOR table + repeats_with_hors table to
 match committed golden files **byte-for-byte**. A second test runs the real
 MAFFT path as a smoke test, and an opt-in test validates against the full
 upstream reference output when it is available on disk.
+
+The golden/reference files were produced by upstream HORT.R at its threshold of
+25, so every parity test pins ``hor_threshold=REF_THRESHOLD`` rather than taking
+trash-py's default — the comparison is only meaningful at the threshold the
+reference was generated with.
 """
 from __future__ import annotations
 
@@ -26,6 +31,9 @@ GOLD = REPO / "tests" / "golden" / "hor"
 SAMPLE_REPEATS = DATA / "hor_sample_repeats.csv"
 SAMPLE_ALN = DATA / "hor_sample_aligned.fasta"
 
+# The divergence threshold the golden and upstream reference files were made with.
+REF_THRESHOLD = 25
+
 
 def _inject_alignment(monkeypatch, aln: Path) -> None:
     def fake_align(repeats, out_dir, name, threads=1):
@@ -39,7 +47,7 @@ def test_hor_tables_byte_identical(tmp_path: Path, monkeypatch) -> None:
     log.configure(quiet=True)
     _inject_alignment(monkeypatch, SAMPLE_ALN)
     args = HorArgs(repeats=SAMPLE_REPEATS, output_folder=tmp_path,
-                   hor_class="178_1", make_plot=False)
+                   hor_class="178_1", hor_threshold=REF_THRESHOLD, make_plot=False)
     run_hor_single(args, "CP116282.1")
 
     for fname in ("HORs_178_1_CP116282.1.csv",
@@ -66,7 +74,8 @@ def test_hor_subcommand_auto_selects_class(tmp_path: Path) -> None:
     most abundant class and produces the expected (byte-identical) HOR table."""
     result = subprocess.run(
         [sys.executable, "-m", "trash_py", "hor", str(SAMPLE_REPEATS),
-         "--chr-list", "CP116282.1", "-o", str(tmp_path), "--no-plot"],
+         "--chr-list", "CP116282.1", "-o", str(tmp_path), "--no-plot",
+         "-t", str(REF_THRESHOLD)],
         capture_output=True, text=True,
     )
     assert result.returncode == 0, result.stderr
@@ -101,7 +110,7 @@ def test_full_reference_parity(tmp_path: Path) -> None:
     chrom = os.environ.get("HOR_REF_CHR", "CP116282.1")
     log.configure(quiet=True)
     args = HorArgs(repeats=repeats, output_folder=tmp_path,
-                   hor_class="178_1", make_plot=False)
+                   hor_class="178_1", hor_threshold=REF_THRESHOLD, make_plot=False)
     run_hor_single(args, chrom)
     got = (tmp_path / f"HORs_178_1_{chrom}.csv").read_text().splitlines()
     ref = (ref_dir / f"HORs_178_1_{chrom}.csv").read_text().splitlines()
