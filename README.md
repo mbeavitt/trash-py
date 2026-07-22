@@ -62,17 +62,6 @@ pip install .
 trash-py -f input.fasta -o output_dir
 ```
 
-Passing `-f -` reads the fasta from stdin, so trash-py can sit in a pipeline:
-
-```
-samtools faidx genome.fa chr1 | trash-py -f - -o output_dir --name chr1
-```
-
-Gzipped input is detected automatically, whether it comes from a file or a pipe.
-Output files are prefixed with the input filename (`stdin` when reading from
-stdin); `--name` overrides that prefix, which is worth setting when piping so
-runs don't collide.
-
 Currently the CLI aims to mirror the one in the original TRASH tool as closely
 as possible, to present a drag-and-drop replacement. trash-py adds a few options
 over upstream: `-q` to silence logs, `-p` to run the array-identification and
