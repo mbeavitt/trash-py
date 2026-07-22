@@ -13,7 +13,7 @@ from pathlib import Path
 
 from . import __version__
 from . import _log as log
-from .pipeline import run_pipeline
+from .pipeline import output_stem, run_pipeline
 from .hor_cli import (
     add_hor_arguments,
     build_hor_parser,
@@ -22,6 +22,15 @@ from .hor_cli import (
     run_hor_cli,
     warn_deprecated_aliases,
 )
+
+
+def fasta_path(value: str) -> Path:
+    """Resolve the `-f` argument, mapping the conventional `-` to stdin.
+
+    /dev/stdin keeps the rest of the pipeline working on a plain path, and
+    its basename doubles as a sensible default output prefix (`stdin_*`).
+    """
+    return Path("/dev/stdin") if value == "-" else Path(value)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -37,8 +46,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "-V", "--version", action="version", version=f"trash-py {__version__}"
     )
-    p.add_argument("-f", "--fasta", required=True, type=Path, help="input fasta")
+    p.add_argument("-f", "--fasta", required=True, type=fasta_path,
+                   help="input fasta; `-` reads from stdin")
     p.add_argument("-o", "--output", required=True, type=Path, help="output directory")
+    p.add_argument("-n", "--name", default=None,
+                   help="prefix for output filenames (default: the input filename, "
+                        "or `stdin` when reading from stdin)")
     p.add_argument("-m", "--max-rep-size", type=int, default=1000)
     p.add_argument("-i", "--min-rep-size", type=int, default=7)
     p.add_argument(
@@ -90,12 +103,16 @@ def main(argv: list[str] | None = None) -> int:
     if not args.fasta.exists():
         print(f"fasta not found: {args.fasta}", file=sys.stderr)
         return 2
+    if args.name is not None and Path(args.name).name != args.name:
+        print(f"--name must be a bare filename prefix, not a path: {args.name}",
+              file=sys.stderr)
+        return 2
     args.output.mkdir(parents=True, exist_ok=True)
     run_pipeline(args)
 
     # "Run and done": optionally detect HORs on the table we just produced.
     if hor_requested(args):
-        repeats_with_seq = args.output / f"{Path(args.fasta).name}_repeats_with_seq.csv"
+        repeats_with_seq = args.output / f"{output_stem(args)}_repeats_with_seq.csv"
         if not repeats_with_seq.exists():
             print(f"cannot run HOR: {repeats_with_seq} not found", file=sys.stderr)
             return 1

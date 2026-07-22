@@ -228,16 +228,25 @@ def _map_array_worker(
     return out, log.pop_stats()
 
 
+def output_stem(args: Any) -> str:
+    """Prefix shared by every output file, overridable with --name.
+
+    Defaults to the input filename; for stdin that resolves to `stdin`,
+    since `-f -` is mapped onto /dev/stdin.
+    """
+    return getattr(args, "name", None) or Path(args.fasta).name
+
+
 def run_pipeline(args: Any) -> None:
     """Drive the pipeline. `args` must expose `.fasta`, `.output`,
     `.max_rep_size`, `.min_rep_size`, and (optionally) `.templates`,
-    `.processes`.
+    `.processes`, `.name`.
     """
     _require_external_tools()
     processes = max(1, int(getattr(args, "processes", 1) or 1))
     output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
-    fasta_name = Path(args.fasta).name
+    fasta_name = output_stem(args)
     window_size = round((args.max_rep_size + KMER) * 1.1)
 
     log.header(f"trash-py v{__version__}")
