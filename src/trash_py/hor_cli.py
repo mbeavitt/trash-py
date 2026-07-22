@@ -104,6 +104,12 @@ def add_hor_arguments(p: argparse.ArgumentParser) -> None:
                    help="HOR stage: label for genome A")
     g.add_argument("--hor-genomeB", dest="genomeB", default="B",
                    help="HOR stage: label for genome B")
+    g.add_argument("--hor-sweep", dest="sweep", action="store_true",
+                   help="HOR stage: also write an interactive HTML dot-plot with a "
+                        "threshold slider, sweeping thresholds 1..--hor-sweep-max "
+                        "(self-comparison only)")
+    g.add_argument("--hor-sweep-max", dest="sweep_max", type=int, default=30,
+                   help="HOR stage: top threshold %% for --hor-sweep (default 30)")
     g.add_argument("--no-hor-plot", dest="no_plot", action="store_true",
                    help="HOR stage: skip the HOR line plot")
     g.add_argument("--no-hor-saveR", dest="no_saveR", action="store_true",
@@ -137,6 +143,8 @@ def run_hor_after_pipeline(args: argparse.Namespace, repeats_path: Path) -> int:
         make_plot=not args.no_plot,
         saveR=not args.no_saveR,
         threads=getattr(args, "processes", 1) or 1,
+        sweep=getattr(args, "sweep", False),
+        sweep_max=getattr(args, "sweep_max", 30),
         chrA_flag="--hor-ChrA", chrB_flag="--hor-ChrB", chr_list_flag="--hor-chr-list",
     )
 
@@ -200,6 +208,11 @@ def build_hor_parser() -> argparse.ArgumentParser:
                    help="label for genome B (--ChrB mode)")
     p.add_argument("--no-plot", dest="no_plot", action="store_true",
                    help="skip the HOR plot")
+    p.add_argument("--sweep", dest="sweep", action="store_true",
+                   help="also write an interactive HTML dot-plot with a threshold "
+                        "slider, sweeping thresholds 1..--sweep-max (self-comparison only)")
+    p.add_argument("--sweep-max", dest="sweep_max", type=int, default=30,
+                   help="top threshold %% for --sweep (default 30)")
     p.add_argument("--no-saveR", dest="no_saveR", action="store_true",
                    help="--ChrB mode only: skip writing repeats_with_hors")
     p.add_argument("-T", "--threads", type=int, default=None,
@@ -282,6 +295,8 @@ def run_hor_cli(ns: argparse.Namespace,
         make_plot=not ns.no_plot,
         saveR=save,
         threads=ns.threads if ns.threads is not None else (os.cpu_count() or 1),
+        sweep=ns.sweep,
+        sweep_max=ns.sweep_max,
     )
 
 
@@ -310,6 +325,7 @@ def _run(*, repeats: Path, repeatsB: Path, output: Path, chr_list: str | None,
          chrA: str | None, chrB: str | None, hor_class: str | None, classB: str | None,
          hor_threshold: int, hor_min_len: int, genomeA: str, genomeB: str,
          make_plot: bool, saveR: bool, threads: int = 1,
+         sweep: bool = False, sweep_max: int = 30,
          chrA_flag: str = "--ChrA", chrB_flag: str = "--ChrB",
          chr_list_flag: str = "--chr-list") -> int:
     if not chr_list and not chrA:
@@ -319,6 +335,9 @@ def _run(*, repeats: Path, repeatsB: Path, output: Path, chr_list: str | None,
 
     # cross-region comparison (method 2)
     if chrB:
+        if sweep:
+            log.warn("--sweep applies to self-comparison only; ignoring it for the "
+                     f"{chrB_flag} cross-region comparison")
         if not chrA:
             print(f"{chrB_flag} requires {chrA_flag}", file=sys.stderr)
             return 2
@@ -370,7 +389,8 @@ def _run(*, repeats: Path, repeatsB: Path, output: Path, chr_list: str | None,
         log.error("skipping all HOR identification: could not determine a repeat class (empty table?)")
         return 2
     args = HorArgs(repeats=repeats, output_folder=output, hor_class=resolved,
-                   hor_threshold=hor_threshold, hor_min_len=hor_min_len, make_plot=make_plot, threads=threads)
+                   hor_threshold=hor_threshold, hor_min_len=hor_min_len, make_plot=make_plot,
+                   threads=threads, sweep=sweep, sweep_max=sweep_max)
 
     failures = 0
     for chrom in chrs:

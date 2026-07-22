@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Interactive HOR threshold sweep (`--hor-sweep` / `trash-py hor --sweep`).**
+  Instead of a single-threshold dot-plot, re-runs the HOR scan at every integer
+  threshold from 1% up to `--hor-sweep-max` (default 30) and writes a
+  self-contained HTML page — the same magma-on-dark self-similarity view as the
+  PNG, but with a slider to scrub across thresholds. All frames are
+  pre-rendered, so scrubbing is instant; Plotly is loaded from CDN (no new
+  Python dependency, but the page needs network the first time it is opened).
+
+  A per-threshold re-scan is required rather than filtering one run: the
+  threshold lives inside the scanner (a HOR block closes when a pair exceeds the
+  SNV cutoff), so lower thresholds give shorter, more-fragmented HORs, not a
+  subset. The one-time MAFFT alignment is reused, and identical `threshold_SNV`
+  values are scanned once and cached, so the sweep is cheap. Self-comparison
+  (method 1) only. Outputs alongside the slider HTML:
+
+  - `HORs_sweep_<class>_<seq>_3d.html` — a 3D stack of the sweep: one dot-plot
+    layer per threshold, highest threshold at the bottom and t=1 on top, so the
+    slices read as one structure. Opaque markers (plotly `scatter3d` drops depth
+    sorting for `opacity < 1`), coloured by divergence.
+  - `HORs_sweep_<class>_<seq>.npz` — the full structured dump: every HOR at every
+    threshold (stored once per distinct `threshold_SNV`), numpy-native so no new
+    dependency. Load with `trash_py.hor_sweep.load_sweep(path)` for a per-threshold
+    view (`.records(pct)`, `.summary()`, `.counts()`) and quick matplotlib recipes
+    (`.dotplot(pct)`, `.count_curve()`) — every bp/size/divergence column
+    re-derives from the raw unit indices with the exact upstream formulas.
+
 ### Changed
 
 - **The HOR divergence threshold now defaults to 4%, down from 25%.** This

@@ -341,6 +341,8 @@ class HorArgs:
     hor_min_len: int = 3
     make_plot: bool = True
     threads: int = 1
+    sweep: bool = False          # also emit the interactive threshold-sweep HTML
+    sweep_max: int = 30          # sweep thresholds 1..sweep_max (%)
 
 
 def run_hor_single(args: HorArgs, chrA: str, rng_tag: float = 0.0) -> None:
@@ -362,6 +364,23 @@ def run_hor_single(args: HorArgs, chrA: str, rng_tag: float = 0.0) -> None:
     name = f"{args.hor_class}__{chrA}_{rng_tag}_"
     aligned = align_repeats(repeats, args.output_folder, name, threads=args.threads)
     log.tool_summary("mafft")
+
+    if args.sweep:
+        # Re-scan the (already built) alignment across thresholds 1..sweep_max and
+        # write the interactive slider plot. Independent of the single-threshold
+        # run below, so it still populates even if that threshold finds nothing.
+        try:
+            from .hor_sweep import run_hor_sweep
+            out_html = args.output_folder / f"HORs_sweep_{args.hor_class}_{chrA}.html"
+            written = run_hor_sweep(aligned, repeats, out_html, chrA, args.hor_class,
+                                    max_threshold=args.sweep_max, min_len=args.hor_min_len)
+            if written is not None:
+                log.detail(f"wrote {out_html.name}, {out_html.stem}_3d.html, "
+                           f"{out_html.stem}.npz (threshold sweep 1–{args.sweep_max}%)")
+            else:
+                log.detail(f"threshold sweep 1–{args.sweep_max}%: no HORs at any threshold")
+        except Exception as e:  # the sweep is a best-effort extra, never fatal
+            log.warn(f"HOR threshold sweep failed: {e}")
 
     raw = args.output_folder / f"{name}raw.hors"
     total = _ext.find_hors_stream(str(aligned), str(raw), 1, threshold_snv, args.hor_min_len, 1)

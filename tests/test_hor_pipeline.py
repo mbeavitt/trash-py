@@ -68,6 +68,66 @@ def test_hor_plot_is_written(tmp_path: Path, monkeypatch) -> None:
     assert png.exists() and png.stat().st_size > 0
 
 
+def test_hor_sweep_writes_interactive_html(tmp_path: Path, monkeypatch) -> None:
+    """--sweep writes a self-contained Plotly HTML with one frame per threshold,
+    and the frame at the single-run threshold agrees on the HOR count."""
+    import json
+    import re
+
+    log.configure(quiet=True)
+    _inject_alignment(monkeypatch, SAMPLE_ALN)
+    args = HorArgs(repeats=SAMPLE_REPEATS, output_folder=tmp_path,
+                   hor_class="178_1", hor_threshold=REF_THRESHOLD, make_plot=False,
+                   sweep=True, sweep_max=REF_THRESHOLD)
+    run_hor_single(args, "CP116282.1")
+
+    html = tmp_path / "HORs_sweep_178_1_CP116282.1.html"
+    assert html.exists() and html.stat().st_size > 0
+    text = html.read_text()
+    assert "cdn.plot.ly" in text          # Plotly loaded from CDN, no bundled JS
+
+    payload = json.loads(re.search(r"const D = (\{.*?\});\n", text, re.S).group(1))
+    frames = payload["frames"]
+    assert [f["pct"] for f in frames] == list(range(1, REF_THRESHOLD + 1))
+
+    # The single-threshold table is written at REF_THRESHOLD; its row count must
+    # equal that frame's HOR count (same scan, same threshold_SNV).
+    single = (tmp_path / "HORs_178_1_CP116282.1.csv").read_text().splitlines()
+    assert frames[REF_THRESHOLD - 1]["n"] == len(single) - 1  # minus header
+
+
+def test_hor_sweep_dump_and_3d(tmp_path: Path, monkeypatch) -> None:
+    """--sweep also writes a structured NPZ dump and a 3D-stack HTML; the loader
+    round-trips, and its per-threshold records match the byte-faithful HOR table
+    at the single-run threshold."""
+    import csv
+    from trash_py.hor_sweep import load_sweep
+
+    log.configure(quiet=True)
+    _inject_alignment(monkeypatch, SAMPLE_ALN)
+    args = HorArgs(repeats=SAMPLE_REPEATS, output_folder=tmp_path,
+                   hor_class="178_1", hor_threshold=REF_THRESHOLD, make_plot=False,
+                   sweep=True, sweep_max=REF_THRESHOLD)
+    run_hor_single(args, "CP116282.1")
+
+    stem = "HORs_sweep_178_1_CP116282.1"
+    assert (tmp_path / f"{stem}.npz").exists()
+    assert (tmp_path / f"{stem}_3d.html").exists()
+
+    s = load_sweep(tmp_path / f"{stem}.npz")
+    assert s.thresholds == list(range(1, REF_THRESHOLD + 1))
+    assert s.chrA == "CP116282.1" and s.hor_class == "178_1"
+
+    # records at REF_THRESHOLD must reproduce the byte-faithful HOR table exactly.
+    rec = s.records(REF_THRESHOLD)
+    with (tmp_path / "HORs_178_1_CP116282.1.csv").open() as f:
+        rows = list(csv.DictReader(f))
+    assert len(rec["snv_per_kbp"]) == len(rows)
+    got = sorted(round(v, 6) for v in rec["snv_per_kbp"].tolist())
+    ref = sorted(round(float(r["SNV_per_kbp"]), 6) for r in rows)
+    assert got == ref
+
+
 @pytest.mark.skipif(shutil.which("mafft") is None, reason="mafft not installed")
 def test_hor_subcommand_auto_selects_class(tmp_path: Path) -> None:
     """`trash-py hor <repeats> --chr-list <seq>` with no --class auto-picks the
