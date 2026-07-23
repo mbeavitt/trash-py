@@ -5,7 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.6.0] - 2026-07-22
+
+### Added
+
+- **Read the input fasta from stdin with `-f -`.** Resolves to `/dev/stdin`, so
+  trash-py can sit in a pipeline (`samtools faidx ref.fa chr1 | trash-py -f -
+  -o out`). Gzip is now detected by magic bytes instead of the `.gz` suffix,
+  which a pipe doesn't have, so `cat x.fa.gz | trash-py -f -` works as well;
+  on-disk `.gz` inputs are unaffected. POSIX only — `/dev/stdin` does not exist
+  on Windows.
+
+- **`-n` / `--name` sets the output filename prefix.** Defaults to the input
+  filename as before (which is `stdin` when reading from a pipe). Mainly useful
+  for piped runs, where the default prefix carries no information and repeated
+  runs would otherwise overwrite each other.
 
 ### Added
 
@@ -291,3 +305,4 @@ logic of the upstream pipeline.
 
 [1.0.0]: https://github.com/mbeavitt/trash-py/releases/tag/v1.0.0
 [2.5.1]: https://github.com/mbeavitt/trash-py/releases/tag/v2.5.1
+[2.6.0]: https://github.com/mbeavitt/trash-py/releases/tag/v2.6.0

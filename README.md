@@ -62,10 +62,22 @@ pip install .
 trash-py -f input.fasta -o output_dir
 ```
 
+Passing `-f -` reads the fasta from stdin, so trash-py can sit in a pipeline:
+
+```
+samtools faidx genome.fa chr1 | trash-py -f - -o output_dir --name chr1
+```
+
+Gzipped input is detected automatically, whether it comes from a file or a pipe.
+Output files are prefixed with the input filename (`stdin` when reading from
+stdin); `--name` overrides that prefix, which is worth setting when piping so
+runs don't collide.
+
 Currently the CLI aims to mirror the one in the original TRASH tool as closely
-as possible, to present a drag-and-drop replacement. trash-py adds two options
-over upstream: `-q` to silence logs, and `-p` to run the array-identification
-and repeat-mapping stages across multiple worker processes.
+as possible, to present a drag-and-drop replacement. trash-py adds a few options
+over upstream: `-q` to silence logs, `-p` to run the array-identification and
+repeat-mapping stages across multiple worker processes, and `--name` to control
+the output prefix.
 
 ### HOR detection
 
@@ -145,7 +157,7 @@ BibTeX:
 
 ```
 $ trash-py --help
-usage: trash-py [-h] [-V] -f FASTA -o OUTPUT [-m MAX_REP_SIZE]
+usage: trash-py [-h] [-V] -f FASTA -o OUTPUT [-n NAME] [-m MAX_REP_SIZE]
                 [-i MIN_REP_SIZE] [-t TEMPLATES] [-q] [-p PROCESSES]
                 [--hor-chr-list CHR_LIST] [--hor-ChrA CHRA] ...
                 {hor} ...
@@ -155,8 +167,10 @@ TRASH — tandem-repeat array identifier (Python)
 options:
   -h, --help            show this help message and exit
   -V, --version         show program's version number and exit
-  -f, --fasta FASTA     input fasta
+  -f, --fasta FASTA     input fasta; `-` reads from stdin
   -o, --output OUTPUT   output directory
+  -n, --name NAME       prefix for output filenames (default: the input
+                        filename, or `stdin` when reading from stdin)
   -m, --max-rep-size MAX_REP_SIZE
   -i, --min-rep-size MIN_REP_SIZE
   -t, --templates TEMPLATES
