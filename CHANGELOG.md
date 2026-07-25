@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.1] - 2026-07-25
+
+### Fixed
+
+- **Whole-genome runs no longer crash on short scaffolds.** The genome CLI fed
+  every sequence into window scoring regardless of length; a sequence shorter
+  than one scoring window (~1,111 bp at the default `max_rep_size`) raised
+  `window extends outside sequence bounds` and aborted the entire run. Since
+  genome assemblies routinely carry short unplaced scaffolds, a run would die on
+  the first sub-window contig. Such a sequence cannot host a scored tandem array
+  anyway, so it is now skipped (with a warning naming the shortest offenders)
+  and the real chromosomes are scored as normal. The programmatic reads API is
+  unchanged — it still raises on short input, since that path annotates a single
+  read rather than a genome.
+
 ## [2.6.0] - 2026-07-22
 
 ### Added

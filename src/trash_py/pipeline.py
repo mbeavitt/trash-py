@@ -277,11 +277,27 @@ def run_pipeline(args: Any) -> None:
                 renamed.append((name, seq))
         fasta = renamed
 
-    # Per-sequence kmer window scoring.
+    # Per-sequence kmer window scoring. A sequence shorter than one window
+    # cannot host a scored tandem array, so it is skipped (empty scores -> zero
+    # regions) with a warning rather than crashing inside seq_win_score_int.
+    # Unplaced sub-window scaffolds are normal in genome assemblies, so a whole
+    # genome must not abort on them (the reads API, by contrast, raises).
     log.section("scanning windows for repeat content")
     all_scores: list[list[float]] = []
-    for _, seq in fasta:
-        all_scores.append(sequence_window_score(seq, window_size, KMER))
+    too_short: list[tuple[str, int]] = []
+    for name, seq in fasta:
+        if len(seq) < window_size:
+            too_short.append((name, len(seq)))
+            all_scores.append([])
+        else:
+            all_scores.append(sequence_window_score(seq, window_size, KMER))
+    if too_short:
+        shortest = sorted(too_short, key=lambda x: x[1])[:5]
+        log.warn(
+            f"{len(too_short)} sequence(s) shorter than the {window_size} bp "
+            f"window skipped (too short to score for tandem arrays); shortest: "
+            + ", ".join(f"{n} ({l:,} bp)" for n, l in shortest)
+        )
 
     # Merge low-singleton windows into repetitive regions.
     rows = []
