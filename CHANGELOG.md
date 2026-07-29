@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.0] - 2026-07-29
+
+### Performance
+
+- **HOR threshold sweeps now run independent cutoffs concurrently.** The native
+  scanner releases the GIL, so `-T/--threads` now controls both MAFFT and the
+  sweep worker pool. On the Arabidopsis CEN178 chromosome-1 benchmark, five
+  cutoffs fell from 17.94 s sequentially to 4.86 s with five workers (3.69x
+  wall-clock speedup), with byte-identical raw HOR records at every threshold.
+  Each cutoff uses its own temporary file, which is removed after loading.
+
 ## [2.6.1] - 2026-07-25
 
 ### Fixed

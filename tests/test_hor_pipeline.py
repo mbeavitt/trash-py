@@ -128,6 +128,34 @@ def test_hor_sweep_dump_and_3d(tmp_path: Path, monkeypatch) -> None:
     assert got == ref
 
 
+def test_threaded_hor_sweep_matches_sequential(tmp_path: Path) -> None:
+    """Threshold parallelism preserves every native HOR record and cleans up
+    its per-threshold scratch files."""
+    import numpy as np
+    from trash_py.hor import read_repeats
+    from trash_py.hor_sweep import scan_sweep
+
+    aligned = tmp_path / "sample.aligned.fasta"
+    shutil.copy(SAMPLE_ALN, aligned)
+    repeats = [
+        r for r in read_repeats(SAMPLE_REPEATS)
+        if r.raw["class"] == "178_1" and r.seqID == "CP116282.1"
+    ]
+
+    sequential = scan_sweep(aligned, repeats, max_threshold=12,
+                            min_len=3, workers=1)
+    threaded = scan_sweep(aligned, repeats, max_threshold=12,
+                          min_len=3, workers=4)
+
+    assert threaded.thresholds == sequential.thresholds
+    assert np.array_equal(threaded.pct_snv, sequential.pct_snv)
+    assert set(threaded.scans) == set(sequential.scans)
+    for snv in sequential.scans:
+        assert np.array_equal(threaded.scans[snv], sequential.scans[snv])
+    assert threaded.counts().tolist() == sequential.counts().tolist()
+    assert not list(tmp_path.glob("*.sweep.*.raw"))
+
+
 @pytest.mark.skipif(shutil.which("mafft") is None, reason="mafft not installed")
 def test_hor_subcommand_auto_selects_class(tmp_path: Path) -> None:
     """`trash-py hor <repeats> --chr-list <seq>` with no --class auto-picks the

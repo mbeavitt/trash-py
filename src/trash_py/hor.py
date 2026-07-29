@@ -373,7 +373,8 @@ def run_hor_single(args: HorArgs, chrA: str, rng_tag: float = 0.0) -> None:
             from .hor_sweep import run_hor_sweep
             out_html = args.output_folder / f"HORs_sweep_{args.hor_class}_{chrA}.html"
             written = run_hor_sweep(aligned, repeats, out_html, chrA, args.hor_class,
-                                    max_threshold=args.sweep_max, min_len=args.hor_min_len)
+                                    max_threshold=args.sweep_max, min_len=args.hor_min_len,
+                                    workers=args.threads)
             if written is not None:
                 log.detail(f"wrote {out_html.name}, {out_html.stem}_3d.html, "
                            f"{out_html.stem}.npz (threshold sweep 1–{args.sweep_max}%)")

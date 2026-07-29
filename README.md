@@ -100,9 +100,9 @@ You don't have to know the satellite class up front, if --class is not provided 
 
 For each sequence this writes `HORs_<class>_<seq>.csv` (the HOR table),
 `repeats_with_hors_<class>_<seq>.csv` (per-repeat annotation), and a
-`HORs_dotplot_<class>_<seq>.png` self-similarity dot-plot. MAFFT is the runtime
-bottleneck, so it's run multi-threaded — `-p` in a pipeline run, `-T/--threads`
-for `trash-py hor` (default: all cores). Quirks preserved from the original tool are
+`HORs_dotplot_<class>_<seq>.png` self-similarity dot-plot. MAFFT and independent
+HOR sweep thresholds run concurrently — `-p` in a pipeline run,
+`-T/--threads` for `trash-py hor` (default: all cores). Quirks preserved from the original tool are
 documented in [`docs/HOR_source_bugs.md`](docs/HOR_source_bugs.md).
 
 ## Benchmarks

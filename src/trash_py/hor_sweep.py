@@ -104,10 +104,11 @@ class SweepData:
 
 
 def scan_sweep(aligned: Path, repeats: list, max_threshold: int = 30,
-               min_len: int = 3) -> SweepData:
+               min_len: int = 3, workers: int = 1) -> SweepData:
     """Run the HOR scan at every threshold 1..max_threshold (%) on an existing
     alignment and return a :class:`SweepData`. Distinct ``threshold_SNV`` values
-    are scanned once (and cached), so the cost is one scan per distinct cutoff."""
+    are scanned once. With ``workers > 1``, independent cutoffs run concurrently;
+    each native scan releases the GIL."""
     import numpy as np
 
     n_rep = len(repeats)
@@ -124,15 +125,30 @@ def scan_sweep(aligned: Path, repeats: list, max_threshold: int = 30,
     # tuples — at high thresholds a single scan can emit tens of millions of HORs,
     # where the list (≈120 B/HOR) would dwarf the int32 array (24 B/HOR).
     aligned = Path(aligned)
-    raw = aligned.with_suffix(".sweep.raw")
+    distinct = list(dict.fromkeys(pct_snv.tolist()))
     scans: dict[int, "object"] = {}
-    for snv in pct_snv.tolist():
-        if snv in scans:
-            continue
-        n = _ext.find_hors_stream(str(aligned), str(raw), 1, int(snv), min_len, 1)
-        scans[snv] = (np.fromfile(raw, dtype=np.int32).reshape(-1, 6) if n
-                      else np.empty((0, 6), np.int32))
-    raw.unlink(missing_ok=True)
+
+    def scan_one(snv: int):
+        raw = aligned.with_suffix(f".sweep.{snv}.raw")
+        try:
+            n = _ext.find_hors_stream(
+                str(aligned), str(raw), 1, int(snv), min_len, 1
+            )
+            rows = (np.fromfile(raw, dtype=np.int32).reshape(-1, 6) if n
+                    else np.empty((0, 6), np.int32))
+            return snv, rows
+        finally:
+            raw.unlink(missing_ok=True)
+
+    if workers > 1 and len(distinct) > 1:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=min(workers, len(distinct))) as pool:
+            for snv, rows in pool.map(scan_one, distinct):
+                scans[snv] = rows
+    else:
+        for snv in distinct:
+            key, rows = scan_one(snv)
+            scans[key] = rows
     return SweepData(starts=starts, ends=ends, widths=widths, median_w=median_w,
                      min_len=min_len, chrA=chrA_of(repeats), hor_class="",
                      thresholds=thresholds, pct_snv=pct_snv, scans=scans)
@@ -163,14 +179,15 @@ def _derive(sw: SweepData, snv: int):
 def run_hor_sweep(aligned: Path, repeats: list, out_html: Path, chrA: str,
                   hor_class: str, max_threshold: int = 30, min_len: int = 3,
                   plot_cap: int = SWEEP_PLOT_CAP, dump: bool = True,
-                  make_3d: bool = True) -> Path | None:
+                  make_3d: bool = True, workers: int = 1) -> Path | None:
     """Scan the aligned repeats across thresholds 1..max_threshold and write the
     outputs: the interactive 2D slider dot-plot (``out_html``), and — when
     enabled — the structured NPZ dump (``*.npz``) and the 3D stacked view
     (``*_3d.html``) alongside it.
 
     Returns the 2D HTML path, or ``None`` if no HORs were found at any threshold."""
-    sw = scan_sweep(aligned, repeats, max_threshold=max_threshold, min_len=min_len)
+    sw = scan_sweep(aligned, repeats, max_threshold=max_threshold, min_len=min_len,
+                    workers=workers)
     sw.chrA = chrA
     sw.hor_class = hor_class
     if int(sw.counts().sum()) == 0:

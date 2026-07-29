@@ -216,7 +216,7 @@ def build_hor_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-saveR", dest="no_saveR", action="store_true",
                    help="--ChrB mode only: skip writing repeats_with_hors")
     p.add_argument("-T", "--threads", type=int, default=None,
-                   help="MAFFT threads (default: all available cores)")
+                   help="MAFFT and HOR-sweep threads (default: all available cores)")
     p.add_argument("-q", "--quiet", action="store_true", help="suppress progress output")
 
     # Hidden aliases: the upstream HORT.R getopt surface plus earlier trash-py
