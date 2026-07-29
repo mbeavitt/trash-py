@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.1] - 2026-07-29
+
+### Added
+
+- **HOR sweeps now report per-cutoff progress.** Each native scan logs its sweep
+  index, threshold percentage (or collapsed percentage range), integer SNV
+  cutoff, start, completion time, and number of HORs found. With multiple
+  workers, completed scans appear as they finish rather than leaving a long
+  silent interval after MAFFT.
+
 ## [2.7.0] - 2026-07-29
 
 ### Performance

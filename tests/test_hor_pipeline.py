@@ -156,6 +156,31 @@ def test_threaded_hor_sweep_matches_sequential(tmp_path: Path) -> None:
     assert not list(tmp_path.glob("*.sweep.*.raw"))
 
 
+def test_hor_sweep_logs_each_distinct_cutoff(tmp_path: Path, monkeypatch) -> None:
+    """Progress output identifies every distinct cutoff at start and finish."""
+    from trash_py.hor import read_repeats
+    from trash_py.hor_sweep import scan_sweep
+
+    aligned = tmp_path / "sample.aligned.fasta"
+    shutil.copy(SAMPLE_ALN, aligned)
+    repeats = [
+        r for r in read_repeats(SAMPLE_REPEATS)
+        if r.raw["class"] == "178_1" and r.seqID == "CP116282.1"
+    ]
+    messages = []
+    monkeypatch.setattr(log, "detail", messages.append)
+
+    sweep = scan_sweep(aligned, repeats, max_threshold=8,
+                       min_len=3, workers=4)
+
+    for index, snv in enumerate(dict.fromkeys(sweep.pct_snv.tolist()), start=1):
+        prefix = f"HOR sweep scan {index}/{len(sweep.scans)}:"
+        matching = [m for m in messages if m.startswith(prefix) and f"SNV cutoff {snv}" in m]
+        assert len(matching) == 2
+        assert any(m.endswith("— starting") for m in matching)
+        assert any(" HORs, " in m for m in matching)
+
+
 @pytest.mark.skipif(shutil.which("mafft") is None, reason="mafft not installed")
 def test_hor_subcommand_auto_selects_class(tmp_path: Path) -> None:
     """`trash-py hor <repeats> --chr-list <seq>` with no --class auto-picks the

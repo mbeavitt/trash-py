@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import math
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -127,8 +128,18 @@ def scan_sweep(aligned: Path, repeats: list, max_threshold: int = 30,
     aligned = Path(aligned)
     distinct = list(dict.fromkeys(pct_snv.tolist()))
     scans: dict[int, "object"] = {}
+    pcts_by_snv: dict[int, list[int]] = {}
+    for pct, snv in zip(thresholds, pct_snv.tolist()):
+        pcts_by_snv.setdefault(snv, []).append(pct)
+    scan_number = {snv: i for i, snv in enumerate(distinct, start=1)}
 
     def scan_one(snv: int):
+        pcts = pcts_by_snv[snv]
+        pct_label = (f"{pcts[0]}%" if len(pcts) == 1
+                     else f"{pcts[0]}–{pcts[-1]}%")
+        label = f"HOR sweep scan {scan_number[snv]}/{len(distinct)}: {pct_label}, SNV cutoff {snv}"
+        log.detail(f"{label} — starting")
+        started = time.perf_counter()
         raw = aligned.with_suffix(f".sweep.{snv}.raw")
         try:
             n = _ext.find_hors_stream(
@@ -136,6 +147,9 @@ def scan_sweep(aligned: Path, repeats: list, max_threshold: int = 30,
             )
             rows = (np.fromfile(raw, dtype=np.int32).reshape(-1, 6) if n
                     else np.empty((0, 6), np.int32))
+            log.detail(
+                f"{label} — {n:,} HORs, {log.format_elapsed(time.perf_counter() - started)}"
+            )
             return snv, rows
         finally:
             raw.unlink(missing_ok=True)
