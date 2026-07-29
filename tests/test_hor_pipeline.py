@@ -105,10 +105,24 @@ def test_hor_sweep_dump_and_3d(tmp_path: Path, monkeypatch) -> None:
 
     log.configure(quiet=True)
     _inject_alignment(monkeypatch, SAMPLE_ALN)
+    messages = []
+    monkeypatch.setattr(log, "detail", messages.append)
     args = HorArgs(repeats=SAMPLE_REPEATS, output_folder=tmp_path,
                    hor_class="178_1", hor_threshold=REF_THRESHOLD, make_plot=False,
                    sweep=True, sweep_max=REF_THRESHOLD)
     run_hor_single(args, "CP116282.1")
+
+    for phase in ("building 2D sweep HTML",
+                  "writing compressed sweep NPZ",
+                  "building 3D sweep HTML"):
+        assert f"{phase}..." in messages
+    written = [
+        m
+        for m in messages
+        if m.startswith("wrote HORs_sweep_") and " MB), " in m
+    ]
+    assert len(written) == 3
+    assert all(" MB), " in m for m in written)
 
     stem = "HORs_sweep_178_1_CP116282.1"
     assert (tmp_path / f"{stem}.npz").exists()

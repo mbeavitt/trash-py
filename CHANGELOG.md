@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.2] - 2026-07-29
+
+### Added
+
+- **HOR sweep post-processing now reports progress.** The previously silent 2D
+  HTML rendering, compressed NPZ writing, and 3D HTML rendering phases each log
+  when they start and finish, including elapsed time, output filename, and size.
+  This makes large high-threshold sweeps visibly active after their native scans
+  have completed.
+
 ## [2.7.1] - 2026-07-29
 
 ### Added

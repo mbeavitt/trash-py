@@ -207,13 +207,31 @@ def run_hor_sweep(aligned: Path, repeats: list, out_html: Path, chrA: str,
     if int(sw.counts().sum()) == 0:
         return None
 
+    def write_phase(label: str, path: Path, writer) -> None:
+        log.detail(f"{label}...")
+        started = time.perf_counter()
+        writer()
+        size_mb = path.stat().st_size / 1_000_000
+        log.detail(
+            f"wrote {path.name} ({size_mb:,.1f} MB), "
+            f"{log.format_elapsed(time.perf_counter() - started)}"
+        )
+
     out_html = Path(out_html)
-    out_html.write_text(_render_html(_build_2d_payload(sw, plot_cap)))
+    write_phase(
+        "building 2D sweep HTML", out_html,
+        lambda: out_html.write_text(_render_html(_build_2d_payload(sw, plot_cap))),
+    )
     if dump:
-        write_sweep_npz(sw, out_html.with_suffix(".npz"))
+        npz = out_html.with_suffix(".npz")
+        write_phase("writing compressed sweep NPZ", npz,
+                    lambda: write_sweep_npz(sw, npz))
     if make_3d:
         three_d = out_html.with_name(out_html.stem + "_3d.html")
-        three_d.write_text(_render_3d_html(_build_3d_payload(sw)))
+        write_phase(
+            "building 3D sweep HTML", three_d,
+            lambda: three_d.write_text(_render_3d_html(_build_3d_payload(sw))),
+        )
     return out_html
 
 
