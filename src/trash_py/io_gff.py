@@ -40,7 +40,7 @@ def export_gff(
     `ARRAYS_COLUMNS` or `REPEATS_COLUMNS` depending on row shape).
     """
     attribute_names = attribute_names or []
-    ordered_keys = ARRAYS_COLUMNS if "top_N" in rows[0] else REPEATS_COLUMNS
+    ordered_keys = ARRAYS_COLUMNS if rows and "top_N" in rows[0] else REPEATS_COLUMNS
 
     def _col(spec: str | int, default: str = ".") -> list[str]:
         if isinstance(spec, int):

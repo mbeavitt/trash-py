@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.3] - 2026-09-21
+
+### Fixed
+
+- **GFF export no longer crashes when there are no rows to write.** `export_gff`
+  read `rows[0]` to decide whether it had been handed an arrays table or a
+  repeats table. On a genome where every array was filtered out before export,
+  that raised `IndexError: list index out of range` and aborted the run after
+  five of the nine output files had been written. Repeat-poor assemblies hit
+  this routinely rather than rarely — three of the first twenty-seven genomes in
+  a 500-genome sweep, spanning a 5 kb virus to a 656 kb bacterium. An empty
+  table now writes an empty GFF and the run completes with all nine files. The
+  process already exited non-zero when this happened, so no run has silently
+  produced truncated output because of it.
+
 ## [2.7.2] - 2026-07-29
 
 ### Added
