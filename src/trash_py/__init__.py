@@ -6,7 +6,7 @@ the pipeline programmatically, or `reads.annotate` / `reads.annotate_sequences`
 for in-memory annotation of individual sequences (e.g. long reads).
 """
 
-__version__ = "2.7.3"
+__version__ = "2.8.0"
 
 from .reads import (  # noqa: E402
     RepeatArray,

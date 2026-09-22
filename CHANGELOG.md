@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.8.0] - 2026-09-22
+
+### Added
+
+- **Runs can now survive an HPC wall-clock limit.** `--checkpoint DIR` streams
+  per-sequence, per-region and per-array progress to a checkpoint directory as
+  the run produces it; re-running the same command resumes from there. The run
+  stops itself when it nears a deadline — read from `SLURM_JOB_END_TIME` when
+  the scheduler exports it, or set with `--time-limit` — or when it is sent one
+  of the `--checkpoint-signal` signals (default `SIGUSR1`, `SIGTERM`), which is
+  what `sbatch --signal=B:USR1@900` gives you ahead of the limit. Tasks already
+  running are allowed to finish, state is committed, and the process exits 75
+  (`EX_TEMPFAIL`) so a batch script can tell "requeue me" from a real failure.
+  A genome that needs more than CSD3's 12 hours no longer needs to be split by
+  hand. Resumed output is byte-identical to that of an uninterrupted run.
+  `scripts/slurm/trash-py-csd3.sbatch` is a worked example that relays the
+  signal and requeues the job; `--restart` discards stale state, and a
+  checkpoint written for a different input, repeat size or version is refused
+  rather than silently mixed in.
+
+### Changed
+
+- **Window scoring holds one sequence's scores at a time.** Scoring and window
+  merging used to run as two passes, keeping every sequence's window scores in
+  memory in between; they are now a single per-sequence loop (which is also
+  what makes that stage resumable). Outputs are unchanged.
+
 ## [2.7.3] - 2026-09-21
 
 ### Fixed

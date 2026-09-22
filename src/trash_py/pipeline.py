@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import shutil
+import signal
 import sys
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
@@ -10,6 +11,7 @@ from typing import Any
 from . import _log as log
 from . import __version__
 from .arrays import ArrayRow, split_and_check_arrays
+from .checkpoint import NO_CHECKPOINT
 from .classify import classify_arrays
 from .io_csv import write_csv_r_style
 from .io_fasta import read_fasta_and_list
@@ -151,12 +153,22 @@ def _log_class_breakdown(classarrays: list[dict[str, Any]], top_n: int = 8) -> N
         )
 
 
-def _worker_init() -> None:
+def _worker_init(stop_signals: tuple[int, ...] = ()) -> None:
     """ProcessPool worker bootstrap: silence per-worker logging and switch
     `_log.run_external` into worker mode so the one-shot `running {tool}...`
-    line is emitted only by the parent."""
+    line is emitted only by the parent.
+
+    `stop_signals` are the signals a checkpointed run treats as "stop and
+    save". Workers ignore them: the parent owns stopping, and it needs the
+    tasks in flight to finish before it writes the checkpoint.
+    """
     log.configure(quiet=True)
     log.set_worker_mode(True)
+    for sig in stop_signals:
+        try:
+            signal.signal(sig, signal.SIG_IGN)
+        except (OSError, ValueError):  # pragma: no cover - platform
+            pass
 
 
 def _split_arrays_worker(
@@ -237,10 +249,15 @@ def output_stem(args: Any) -> str:
     return getattr(args, "name", None) or Path(args.fasta).name
 
 
-def run_pipeline(args: Any) -> None:
+def run_pipeline(args: Any, ckpt: Any = NO_CHECKPOINT) -> None:
     """Drive the pipeline. `args` must expose `.fasta`, `.output`,
     `.max_rep_size`, `.min_rep_size`, and (optionally) `.templates`,
     `.processes`, `.name`.
+
+    `ckpt` is a `checkpoint.Checkpoint` (or the no-op `NO_CHECKPOINT`).
+    When it is a real one, the three long stages record their progress as
+    they go and a stop request raises `checkpoint.Checkpointed` out of
+    here with everything finished so far on disk.
     """
     _require_external_tools()
     processes = max(1, int(getattr(args, "processes", 1) or 1))
@@ -252,6 +269,8 @@ def run_pipeline(args: Any) -> None:
     log.header(f"trash-py v{__version__}")
     log.detail(f"input:  {args.fasta}")
     log.detail(f"output: {output_dir}/")
+    ckpt.install_signal_handlers()
+    ckpt.describe()
 
     # Load fasta + dedupe sequence headers (suffix any duplicates with 1, 2, ...)
     fasta = read_fasta_and_list(Path(args.fasta))
@@ -283,14 +302,7 @@ def run_pipeline(args: Any) -> None:
     # Unplaced sub-window scaffolds are normal in genome assemblies, so a whole
     # genome must not abort on them (the reads API, by contrast, raises).
     log.section("scanning windows for repeat content")
-    all_scores: list[list[float]] = []
-    too_short: list[tuple[str, int]] = []
-    for name, seq in fasta:
-        if len(seq) < window_size:
-            too_short.append((name, len(seq)))
-            all_scores.append([])
-        else:
-            all_scores.append(sequence_window_score(seq, window_size, KMER))
+    too_short = [(name, len(seq)) for name, seq in fasta if len(seq) < window_size]
     if too_short:
         shortest = sorted(too_short, key=lambda x: x[1])[:5]
         log.warn(
@@ -299,14 +311,22 @@ def run_pipeline(args: Any) -> None:
             + ", ".join(f"{n} ({l:,} bp)" for n, l in shortest)
         )
 
-    # Merge low-singleton windows into repetitive regions.
-    rows = []
-    per_seq_regions: list[list] = []
-    for idx, ((name, seq), scores) in enumerate(zip(fasta, all_scores), start=1):
-        seq_regions = list(merge_windows(scores, window_size, len(seq)))
-        per_seq_regions.append(seq_regions)
-        for region in seq_regions:
-            rows.append([region.start, region.end, region.score, name, idx])
+    # Score and merge one sequence at a time: a checkpointed run can then
+    # stop between sequences, and a genome's window scores never all have
+    # to be held in memory at once.
+    with ckpt.stage("regions", len(fasta)) as regions_stage:
+        for idx in range(regions_stage.resume_index, len(fasta)):
+            name, seq = fasta[idx]
+            scores = (
+                []
+                if len(seq) < window_size
+                else sequence_window_score(seq, window_size, KMER)
+            )
+            regions_stage.record(
+                [region.start, region.end, region.score, name, idx + 1]
+                for region in merge_windows(scores, window_size, len(seq))
+            )
+    rows = regions_stage.rows
 
     write_csv_r_style(
         output_dir / f"{fasta_name}_regarrays.csv",
@@ -314,8 +334,8 @@ def run_pipeline(args: Any) -> None:
         rows=rows,
     )
 
-    region_total_bp = sum(r.end - r.start + 1 for regs in per_seq_regions for r in regs)
-    region_count = sum(len(regs) for regs in per_seq_regions)
+    region_total_bp = sum(end - start + 1 for start, end, *_ in rows)
+    region_count = len(rows)
     genome_total = sum(len(s) for _, s in fasta)
     region_plural = "s" if region_count != 1 else ""
     log.detail(f"{region_count} repetitive region{region_plural} found")
@@ -324,43 +344,53 @@ def run_pipeline(args: Any) -> None:
 
     # Per-region: split into individual arrays + extract a representative.
     log.section("identifying arrays in repetitive regions")
-    region_tasks: list[tuple[int, str, str, int, int, int, int]] = []
-    for (name, seq), seq_regions, idx in zip(
-        fasta, per_seq_regions, range(1, len(fasta) + 1)
-    ):
-        for region in seq_regions:
-            region_seq = seq[region.start - 1:region.end]
-            region_tasks.append((
-                region.start, region_seq, name, idx,
-                args.max_rep_size, args.min_rep_size, KMER,
-            ))
+    seq_by_numID = {idx: seq for idx, (_, seq) in enumerate(fasta, start=1)}
+    region_tasks: list[tuple[int, str, str, int, int, int, int]] = [
+        (
+            start, seq_by_numID[numID][start - 1:end], name, numID,
+            args.max_rep_size, args.min_rep_size, KMER,
+        )
+        for start, end, _score, name, numID in rows
+    ]
 
-    arr_rows: list[list] = []
-
-    def _emit_array_rows(arrs: list[ArrayRow]) -> None:
-        for arr in arrs:
-            arr_rows.append([
+    def _array_rows(arrs: list[ArrayRow]) -> list[list]:
+        return [
+            [
                 arr.start, arr.end, arr.seqID, arr.numID,
                 arr.score, arr.top_N, arr.top_5_N, arr.representative,
-            ])
+            ]
+            for arr in arrs
+        ]
 
-    if processes > 1 and region_tasks:
-        log.announce_tool("clustalo")
-        with ProcessPoolExecutor(max_workers=processes, initializer=_worker_init) as ex:
-            for arrs, stats in ex.map(_split_arrays_worker, region_tasks):
-                log.merge_stats(stats)
-                _emit_array_rows(arrs)
-    else:
-        for region_start, region_seq, name, idx, max_rep, min_rep, kmer in region_tasks:
-            _emit_array_rows(split_and_check_arrays(
-                region_start=region_start,
-                sequence=region_seq,
-                seqID=name,
-                numID=idx,
-                max_repeat=max_rep,
-                min_repeat=min_rep,
-                kmer=kmer,
-            ))
+    with ckpt.stage("arrays", len(region_tasks)) as arrays_stage:
+        pending_regions = arrays_stage.skip(region_tasks)
+        if processes > 1 and pending_regions:
+            log.announce_tool("clustalo")
+            # Not a `with` block: a stop request has to be able to break out
+            # without waiting for every queued region to be processed.
+            ex = ProcessPoolExecutor(
+                max_workers=processes,
+                initializer=_worker_init,
+                initargs=(ckpt.signal_numbers,),
+            )
+            try:
+                for arrs, stats in ex.map(_split_arrays_worker, pending_regions):
+                    log.merge_stats(stats)
+                    arrays_stage.record(_array_rows(arrs))
+            finally:
+                ex.shutdown(wait=True, cancel_futures=True)
+        else:
+            for region_start, region_seq, name, idx, max_rep, min_rep, kmer in pending_regions:
+                arrays_stage.record(_array_rows(split_and_check_arrays(
+                    region_start=region_start,
+                    sequence=region_seq,
+                    seqID=name,
+                    numID=idx,
+                    max_repeat=max_rep,
+                    min_repeat=min_rep,
+                    kmer=kmer,
+                )))
+    arr_rows = arrays_stage.rows
 
     write_csv_r_style(
         output_dir / f"{fasta_name}_aregarrays.csv",
@@ -438,7 +468,6 @@ def run_pipeline(args: Any) -> None:
     # edge-repeat refinement.
     log.section("mapping repeats")
     fasta_by_seqID = {name: seq for name, seq in fasta}
-    repeats_rows: list[dict] = []
 
     by_seq: dict[str, list[dict]] = {}
     for arr in classarrays:
@@ -473,16 +502,26 @@ def run_pipeline(args: Any) -> None:
                     adjust_start, templates_by_name, str(output_dir),
                 ))
 
-    if processes > 1 and map_tasks:
-        log.announce_tool("nhmmer")
-        log.announce_tool("clustalo")
-        with ProcessPoolExecutor(max_workers=processes, initializer=_worker_init) as ex:
-            for rows, stats in ex.map(_map_array_worker, map_tasks):
-                log.merge_stats(stats)
-                repeats_rows.extend(rows)
-    else:
-        for task in map_tasks:
-            repeats_rows.extend(_map_array(task))
+    with ckpt.stage("repeats", len(map_tasks)) as repeats_stage:
+        pending_arrays = repeats_stage.skip(map_tasks)
+        if processes > 1 and pending_arrays:
+            log.announce_tool("nhmmer")
+            log.announce_tool("clustalo")
+            ex = ProcessPoolExecutor(
+                max_workers=processes,
+                initializer=_worker_init,
+                initargs=(ckpt.signal_numbers,),
+            )
+            try:
+                for mapped, stats in ex.map(_map_array_worker, pending_arrays):
+                    log.merge_stats(stats)
+                    repeats_stage.record(mapped)
+            finally:
+                ex.shutdown(wait=True, cancel_futures=True)
+        else:
+            for task in pending_arrays:
+                repeats_stage.record(_map_array(task))
+    repeats_rows = repeats_stage.rows
 
     log.detail(
         f"{len(repeats_rows):,} repeats found across {len(classarrays)} arrays"

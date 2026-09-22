@@ -13,6 +13,7 @@ from pathlib import Path
 
 from . import __version__
 from . import _log as log
+from . import checkpoint as ckpt_mod
 from .pipeline import output_stem, run_pipeline
 from .hor_cli import (
     add_hor_arguments,
@@ -70,6 +71,56 @@ def build_parser() -> argparse.ArgumentParser:
         help="parallel worker processes for the array-identification and "
         "repeat-mapping stages (default 1 = serial)",
     )
+
+    ck = p.add_argument_group(
+        "checkpointing",
+        "Survive an HPC wall-clock limit: save progress as the run goes, stop "
+        "cleanly when the scheduler warns us, and resume where it stopped when "
+        "the same command runs again.",
+    )
+    ck.add_argument(
+        "--checkpoint",
+        nargs="?",
+        const="",
+        default=None,
+        metavar="DIR",
+        help="record resumable progress in DIR and resume from it if it "
+             "already holds state for this run (default DIR: "
+             "<output>/<name>.checkpoint)",
+    )
+    ck.add_argument(
+        "--restart", action="store_true",
+        help="discard any existing checkpoint and start from scratch",
+    )
+    ck.add_argument(
+        "--keep-checkpoint", action="store_true",
+        help="keep the checkpoint directory after a successful run "
+             "(it is deleted by default)",
+    )
+    ck.add_argument(
+        "--checkpoint-interval", type=float,
+        default=ckpt_mod.DEFAULT_INTERVAL, metavar="SECONDS",
+        help=f"how often to commit progress to disk "
+             f"(default {ckpt_mod.DEFAULT_INTERVAL:.0f}s)",
+    )
+    ck.add_argument(
+        "--time-limit", default=None, metavar="DURATION",
+        help="wall-clock budget for this run, e.g. 11h, 690m, 11:30:00, or a "
+             "bare number of seconds; when unset, SLURM_JOB_END_TIME is used "
+             "if the scheduler exported it",
+    )
+    ck.add_argument(
+        "--time-margin", type=str, default=None, metavar="DURATION",
+        help=f"stop this long before the deadline, to leave room for saving "
+             f"state and for in-flight tasks to finish (default "
+             f"{ckpt_mod.DEFAULT_MARGIN / 60:.0f}m)",
+    )
+    ck.add_argument(
+        "--checkpoint-signal", default=ckpt_mod.DEFAULT_SIGNALS, metavar="LIST",
+        help=f"comma-separated signals that request a checkpoint-and-stop "
+             f"(default {ckpt_mod.DEFAULT_SIGNALS})",
+    )
+
     add_hor_arguments(p)
 
     # Register `hor` so it shows up under `trash-py --help`. Actual parsing of
@@ -108,13 +159,58 @@ def main(argv: list[str] | None = None) -> int:
               file=sys.stderr)
         return 2
     args.output.mkdir(parents=True, exist_ok=True)
-    run_pipeline(args)
 
-    # "Run and done": optionally detect HORs on the table we just produced.
-    if hor_requested(args):
-        repeats_with_seq = args.output / f"{output_stem(args)}_repeats_with_seq.csv"
-        if not repeats_with_seq.exists():
-            print(f"cannot run HOR: {repeats_with_seq} not found", file=sys.stderr)
-            return 1
-        return run_hor_after_pipeline(args, repeats_with_seq)
+    try:
+        checkpoint = _build_checkpoint(args)
+    except ValueError as exc:
+        print(f"{exc}", file=sys.stderr)
+        return 2
+
+    try:
+        run_pipeline(args, checkpoint)
+
+        # "Run and done": optionally detect HORs on the table we just produced.
+        if hor_requested(args):
+            repeats_with_seq = args.output / f"{output_stem(args)}_repeats_with_seq.csv"
+            if not repeats_with_seq.exists():
+                print(f"cannot run HOR: {repeats_with_seq} not found", file=sys.stderr)
+                return 1
+            status = run_hor_after_pipeline(args, repeats_with_seq)
+            if status != 0:
+                return status
+    except ckpt_mod.Checkpointed as stop:
+        # State is already on disk; re-running the same command resumes.
+        print(
+            f"trash-py stopped early ({stop.reason}) and saved its state to "
+            f"{stop.directory}.\nRe-run the same command to resume.",
+            file=sys.stderr,
+        )
+        return ckpt_mod.EXIT_CHECKPOINTED
+
+    checkpoint.complete()
     return 0
+
+
+def _build_checkpoint(args: argparse.Namespace):
+    """Turn the --checkpoint/--time-* flags into a Checkpoint (or the no-op)."""
+    if args.checkpoint is None:
+        return ckpt_mod.NO_CHECKPOINT
+
+    if not args.fasta.is_file():
+        raise ValueError(
+            f"--checkpoint needs a regular fasta file to resume from, "
+            f"not {args.fasta}"
+        )
+
+    if args.checkpoint == "":
+        args.checkpoint = args.output / f"{output_stem(args)}.checkpoint"
+
+    margin = ckpt_mod.DEFAULT_MARGIN
+    if args.time_margin is not None:
+        margin = ckpt_mod.parse_duration(args.time_margin)
+    args.time_margin = margin
+    if args.time_limit is not None:
+        ckpt_mod.parse_duration(args.time_limit)  # fail fast on a typo
+    ckpt_mod.parse_signals(args.checkpoint_signal)
+
+    return ckpt_mod.from_args(args, output_stem(args))
