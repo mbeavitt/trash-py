@@ -105,6 +105,68 @@ HOR sweep thresholds run concurrently — `-p` in a pipeline run,
 `-T/--threads` for `trash-py hor` (default: all cores). Quirks preserved from the original tool are
 documented in [`docs/HOR_source_bugs.md`](docs/HOR_source_bugs.md).
 
+## Long runs: checkpointing and resuming
+
+A large, repeat-rich genome can take longer than a scheduler will let one
+job run — CSD3's 12-hour cap, for instance. `--checkpoint` makes a run
+resumable: progress is written to a checkpoint directory as it happens, the
+run stops cleanly when the allocation is nearly up, and re-running the very
+same command picks up where it left off.
+
+```
+trash-py -f genome.fasta -o out -p 32 --checkpoint out/checkpoint
+```
+
+* The run stops early if it hits a deadline or is signalled. It finishes the
+  tasks already in flight, commits its state, and exits **75** (`EX_TEMPFAIL`)
+  — distinct from success (0) and from a real failure.
+* The deadline comes from `SLURM_JOB_END_TIME` when Slurm exports it (so
+  nothing extra is needed inside a job), or from `--time-limit 11h`.
+  `--time-margin` (default 10m) is how long before the deadline to stop,
+  which has to cover saving state plus the longest single `nhmmer` call.
+* `--checkpoint-signal` (default `USR1,TERM`) lists the signals that request
+  the same stop, for a scheduler that warns before killing.
+* Resuming re-runs the same command: the checkpoint is validated against the
+  input fasta, templates, repeat-size settings and trash-py version, and a
+  run that doesn't match is refused rather than silently mixed. `--restart`
+  throws the state away and starts over. `-p` may change between runs.
+* The checkpoint directory is deleted once the run completes; pass
+  `--keep-checkpoint` to hold on to it.
+
+Progress is tracked per sequence (window scoring), per repetitive region
+(array identification) and per array (repeat mapping) — the three stages that
+dominate a long run. Resumed output is byte-identical to the output of an
+uninterrupted run.
+
+### On Slurm (CSD3)
+
+[`scripts/slurm/trash-py-csd3.sbatch`](scripts/slurm/trash-py-csd3.sbatch) is
+a ready-made batch script: it asks Slurm to signal the job 15 minutes before
+the limit, relays that signal to trash-py, and requeues the job when trash-py
+exits 75, so a genome needing three allocations gets them without anyone
+watching.
+
+The relay matters. `#SBATCH --signal=B:USR1@900` sends `SIGUSR1` to the batch
+shell, not to the program it launched, and bash only runs a trap between
+commands — so trash-py has to run in the background with an explicit `wait`:
+
+```bash
+#SBATCH --signal=B:USR1@900
+#SBATCH --requeue
+#SBATCH --open-mode=append
+
+trap 'kill -USR1 "$trash_pid"' USR1
+
+trash-py -f "$GENOME" -o "$OUTDIR" -p "$SLURM_CPUS_PER_TASK" \
+         --checkpoint "$OUTDIR/checkpoint" &
+trash_pid=$!
+
+wait "$trash_pid"; status=$?
+while [ "$status" -gt 128 ]; do wait "$trash_pid"; status=$?; done
+
+[ "$status" -eq 75 ] && scontrol requeue "$SLURM_JOB_ID"
+```
+
 ## Benchmarks
 
 ![trash-py runtime and parallel speedup vs. process count](docs/images/runtime_plot.png)
@@ -148,6 +210,9 @@ BibTeX:
 $ trash-py --help
 usage: trash-py [-h] [-V] -f FASTA -o OUTPUT [-n NAME] [-m MAX_REP_SIZE]
                 [-i MIN_REP_SIZE] [-t TEMPLATES] [-q] [-p PROCESSES]
+                [--checkpoint [DIR]] [--restart] [--keep-checkpoint]
+                [--checkpoint-interval SECONDS] [--time-limit DURATION]
+                [--time-margin DURATION] [--checkpoint-signal LIST]
                 [--hor-chr-list CHR_LIST] [--hor-ChrA CHRA] ...
                 {hor} ...
 
@@ -169,6 +234,31 @@ options:
   -p, --processes PROCESSES
                         parallel worker processes for the array-identification
                         and repeat-mapping stages (default 1 = serial)
+
+checkpointing:
+  Survive an HPC wall-clock limit: save progress as the run goes, stop cleanly
+  when the scheduler warns us, and resume where it stopped when the same
+  command runs again.
+
+  --checkpoint [DIR]    record resumable progress in DIR and resume from it if
+                        it already holds state for this run (default DIR:
+                        <output>/<name>.checkpoint)
+  --restart             discard any existing checkpoint and start from scratch
+  --keep-checkpoint     keep the checkpoint directory after a successful run
+                        (it is deleted by default)
+  --checkpoint-interval SECONDS
+                        how often to commit progress to disk (default 300s)
+  --time-limit DURATION
+                        wall-clock budget for this run, e.g. 11h, 690m,
+                        11:30:00, or a bare number of seconds; when unset,
+                        SLURM_JOB_END_TIME is used if the scheduler exported it
+  --time-margin DURATION
+                        stop this long before the deadline, to leave room for
+                        saving state and for in-flight tasks to finish
+                        (default 10m)
+  --checkpoint-signal LIST
+                        comma-separated signals that request a checkpoint-and-
+                        stop (default USR1,TERM)
 
 HOR detection — a SEPARATE second stage:
   These options (all --hor-* prefixed) configure higher-order-repeat detection,
