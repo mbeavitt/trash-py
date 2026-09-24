@@ -161,10 +161,12 @@ options:
   -n, --name NAME       prefix for output filenames (default: the input
                         filename, or `stdin` when reading from stdin)
   -m, --max-rep-size MAX_REP_SIZE
+                        maximum repeat unit length in bp (default 1000)
   -i, --min-rep-size MIN_REP_SIZE
+                        minimum repeat unit length in bp (default 7)
   -t, --templates TEMPLATES
                         optional template fasta — assigns class names from
-                        headers
+                        headers (default: none)
   -q, --quiet           suppress progress output
   -p, --processes PROCESSES
                         parallel worker processes for the array-identification

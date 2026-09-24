@@ -52,14 +52,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("-n", "--name", default=None,
                    help="prefix for output filenames (default: the input filename, "
                         "or `stdin` when reading from stdin)")
-    p.add_argument("-m", "--max-rep-size", type=int, default=1000)
-    p.add_argument("-i", "--min-rep-size", type=int, default=7)
+    p.add_argument("-m", "--max-rep-size", type=int, default=1000,
+                   help="maximum repeat unit length in bp (default 1000)")
+    p.add_argument("-i", "--min-rep-size", type=int, default=7,
+                   help="minimum repeat unit length in bp (default 7)")
     p.add_argument(
         "-t",
         "--templates",
         type=Path,
         default=None,
-        help="optional template fasta — assigns class names from headers",
+        help="optional template fasta — assigns class names from headers "
+        "(default: none)",
     )
     p.add_argument("-q", "--quiet", action="store_true", help="suppress progress output")
     p.add_argument(

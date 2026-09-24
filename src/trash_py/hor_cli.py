@@ -101,9 +101,9 @@ def add_hor_arguments(p: argparse.ArgumentParser) -> None:
     g.add_argument("--hor-min-len", dest="hor_min_len", type=int, default=3,
                    help="HOR stage: minimum HOR length in repeat units (default 3)")
     g.add_argument("--hor-genomeA", dest="genomeA", default="A",
-                   help="HOR stage: label for genome A")
+                   help="HOR stage: label for genome A (default A)")
     g.add_argument("--hor-genomeB", dest="genomeB", default="B",
-                   help="HOR stage: label for genome B")
+                   help="HOR stage: label for genome B (default B)")
     g.add_argument("--hor-sweep", dest="sweep", action="store_true",
                    help="HOR stage: also write an interactive HTML dot-plot with a "
                         "threshold slider, sweeping thresholds 1..--hor-sweep-max "
@@ -203,9 +203,9 @@ def build_hor_parser() -> argparse.ArgumentParser:
     p.add_argument("-l", "--min-len", dest="hor_min_len", type=int, default=3,
                    help="minimum HOR length in repeat units (default 3)")
     p.add_argument("-g", "--genomeA", dest="genomeA", default="A",
-                   help="label for genome A (--ChrB mode)")
+                   help="label for genome A (--ChrB mode; default A)")
     p.add_argument("-G", "--genomeB", dest="genomeB", default="B",
-                   help="label for genome B (--ChrB mode)")
+                   help="label for genome B (--ChrB mode; default B)")
     p.add_argument("--no-plot", dest="no_plot", action="store_true",
                    help="skip the HOR plot")
     p.add_argument("--sweep", dest="sweep", action="store_true",
