@@ -8,9 +8,11 @@ representative in its class.
 from __future__ import annotations
 
 import math
+from bisect import bisect_left
 from collections import Counter
 from typing import Any
 
+from ._ext import classify_core as _classify_core
 from .sequence import rev_comp_string
 
 
@@ -67,12 +69,41 @@ def classify_repeats(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if not which_to_classify:
         return out
 
+    # Same dicts as `out`, so classifying `temp` in place updates `out`.
     temp = [out[i] for i in which_to_classify]
+    if all(r["representative"].isascii() for r in temp):
+        _classify_native(temp)
+    else:
+        _classify_loop(temp)
+    return out
+
+
+def _importance(rows: list[dict[str, Any]]) -> list[float]:
+    width = [int(r["end"]) - int(r["start"]) for r in rows]
+    score = [float(r["score"]) for r in rows]
+    return [w * s if s != 0 else float(w) for w, s in zip(width, score)]
+
+
+def _classify_native(temp: list[dict[str, Any]]) -> None:
+    """`_classify_loop` in C, for ASCII representatives. Mutates `temp`."""
+    reps = [r["representative"] for r in temp]
+    rv_reps = [rev_comp_string(rep) for rep in reps]
+    iters, widths, is_rv = _classify_core(
+        reps, rv_reps, _importance(temp),
+        KMER_CLASSIFY, SIZE_DIF_TO_CHECK, MAX_DISTANCE_TO_CLASSIFY,
+    )
+    for r, rv_rep, it, w, rv in zip(temp, rv_reps, iters, widths, is_rv):
+        r["class"] = f"{w}_{it}"
+        if rv:
+            r["representative"] = rv_rep
+
+
+def _classify_loop(temp: list[dict[str, Any]]) -> None:
+    """Reference implementation of the greedy loop. Mutates `temp` in place:
+    sets class, and rev-comps representatives matched on the rv strand."""
     n = len(temp)
 
-    width = [int(r["end"]) - int(r["start"]) for r in temp]
-    score = [float(r["score"]) for r in temp]
-    importance: list[float] = [w * s if s != 0 else float(w) for w, s in zip(width, score)]
+    importance = _importance(temp)
     rep_width = [len(r["representative"]) for r in temp]
     class_vec: list[str] = [r["class"] for r in temp]
 
@@ -141,11 +172,8 @@ def classify_repeats(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         importance[which_top] = 0.0
         names_iterator += 1
 
-    for idx, orig_idx in enumerate(which_to_classify):
-        out[orig_idx]["class"] = class_vec[idx]
-        out[orig_idx]["representative"] = temp[idx]["representative"]
-
-    return out
+    for r, c in zip(temp, class_vec):
+        r["class"] = c
 
 
 def _mode_smallest(values: list[int]) -> int:
@@ -191,15 +219,24 @@ def compare_kmer_grep(
     extended_rv = rev * copies
     kmers_rv = [extended_rv[j:j + kmer] for j in range(n_kmers)]
 
-    def first_match(pattern: str, kmers: list[str], start_idx: int) -> int:
-        """1-based index of first equal kmer in kmers[start_idx:], or 0."""
-        for j in range(start_idx, len(kmers)):
-            if kmers[j] == pattern:
-                return j - start_idx + 1
-        return 0
+    def positions(kmers: list[str]) -> dict[str, list[int]]:
+        where: dict[str, list[int]] = {}
+        for j, km in enumerate(kmers):
+            where.setdefault(km, []).append(j)
+        return where
 
-    distances_fw = [first_match(sequence_kmers[i], kmers_fw, i) for i in range(len(sequence_kmers))]
-    distances_rv = [first_match(sequence_kmers[i], kmers_rv, i) for i in range(len(sequence_kmers))]
+    def first_match(pattern: str, where: dict[str, list[int]], start_idx: int) -> int:
+        """1-based index of first equal kmer in kmers[start_idx:], or 0."""
+        hits = where.get(pattern)
+        if hits is None:
+            return 0
+        b = bisect_left(hits, start_idx)
+        return hits[b] - start_idx + 1 if b < len(hits) else 0
+
+    where_fw = positions(kmers_fw)
+    where_rv = positions(kmers_rv)
+    distances_fw = [first_match(sequence_kmers[i], where_fw, i) for i in range(len(sequence_kmers))]
+    distances_rv = [first_match(sequence_kmers[i], where_rv, i) for i in range(len(sequence_kmers))]
 
     if sum(distances_fw) + sum(distances_rv) == 0:
         return sequence_to_realign
@@ -272,17 +309,21 @@ def classify_arrays(
             seen[c] = None
     class_order = list(seen.keys())
 
+    members: dict[str, list[dict[str, Any]]] = {c: [] for c in class_order}
+    for r in classified:
+        group = members.get(r["class"])
+        if group is not None:
+            group.append(r)
+
     for cls in class_order:
-        idx = [i for i, r in enumerate(classified) if r["class"] == cls]
-        subset = [classified[i] for i in idx]
-        shifted = shift_classes(subset)
-        for k, new_rep in zip(idx, shifted):
-            classified[k]["representative"] = new_rep
+        subset = members[cls]
+        for r, new_rep in zip(subset, shift_classes(subset)):
+            r["representative"] = new_rep
 
     # R: rbind(processed classes in order, then template/none_identified rows)
     processed: list[dict[str, Any]] = []
     for cls in class_order:
-        processed.extend(r for r in classified if r["class"] == cls)
+        processed.extend(members[cls])
     tail_rows = [
         r for r in classified
         if r["class"] in template_names or r["class"] == "none_identified"

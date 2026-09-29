@@ -1079,7 +1079,483 @@ static PyObject *find_hors_stream_impl(PyObject *self, PyObject *args) {
     return PyLong_FromSsize_t(sink.n);
 }
 
+// ---- classify_repeats core -------------------------------------------------
+//
+// The greedy kmer-coverage classification loop from classify.py, moved whole.
+// The Python loop costs O(n_classes x n): every iteration rescans all rows for
+// the argmax and the width band, and merges kmer sets for every candidate in
+// the band, nearly all of which miss. Here:
+//   * the next top is read off a (importance desc, index asc) ordering, which
+//     equals R `which.max` whenever the best unclassified importance is > 0;
+//     otherwise the exact linear scan runs, as in Python;
+//   * each circular kmer is packed 8 bits per char into a uint64 (exact for any
+//     ASCII string, no ACGT assumption);
+//   * candidates come from inverted indexes (kmer -> rows, fw and rv), each
+//     list ordered by width so the band is a binary search, with dead rows
+//     skipped lazily. Walking top's kmers accumulates every candidate's exact
+//     coverage (ScanCount), so rows sharing no kmer with top are never touched.
+
+static int cmp_u64(const void *a, const void *b) {
+    uint64_t x = *(const uint64_t *)a, y = *(const uint64_t *)b;
+    return (x > y) - (x < y);
+}
+
+// Fill bags->codes[off..] with the sorted unique circular kmers of s, and the
+// multiplicities into counts[off..] when counts is non-NULL. Returns unique count.
+static Py_ssize_t circular_bag(const Py_UCS1 *s, Py_ssize_t n, int k,
+                               uint64_t *codes, uint32_t *counts) {
+    for (Py_ssize_t i = 0; i < n; i++) {
+        uint64_t c = 0;
+        for (int j = 0; j < k; j++) c = (c << 8) | s[(i + j) % n];
+        codes[i] = c;
+    }
+    qsort(codes, (size_t)n, sizeof *codes, cmp_u64);
+    Py_ssize_t u = 0;
+    for (Py_ssize_t i = 0; i < n; i++) {
+        if (u > 0 && codes[u - 1] == codes[i]) {
+            if (counts) counts[u - 1]++;
+        } else {
+            codes[u] = codes[i];
+            if (counts) counts[u] = 1;
+            u++;
+        }
+    }
+    return u;
+}
+
+// sum over top's distinct kmers present in cand of their multiplicity in top:
+// R `sum(top_kmers %in% cand_kmers)`.
+static Py_ssize_t bag_coverage(const uint64_t *tc, const uint32_t *tn, Py_ssize_t ta,
+                               const uint64_t *cc, Py_ssize_t cb) {
+    Py_ssize_t i = 0, j = 0, s = 0;
+    while (i < ta && j < cb) {
+        if (tc[i] < cc[j]) i++;
+        else if (tc[i] > cc[j]) j++;
+        else { s += tn[i]; i++; j++; }
+    }
+    return s;
+}
+
+static const double *cls_imp_key;
+static const Py_ssize_t *cls_width_key;
+
+// importance descending, NaN last, ties on lower index.
+static int cmp_by_importance(const void *a, const void *b) {
+    Py_ssize_t x = *(const Py_ssize_t *)a, y = *(const Py_ssize_t *)b;
+    double vx = cls_imp_key[x], vy = cls_imp_key[y];
+    int nx = isnan(vx), ny = isnan(vy);
+    if (nx != ny) return nx - ny;
+    if (!nx) {
+        if (vx > vy) return -1;
+        if (vx < vy) return 1;
+    }
+    return (x > y) - (x < y);
+}
+
+static int cmp_by_width(const void *a, const void *b) {
+    Py_ssize_t x = *(const Py_ssize_t *)a, y = *(const Py_ssize_t *)b;
+    Py_ssize_t wx = cls_width_key[x], wy = cls_width_key[y];
+    if (wx != wy) return (wx > wy) - (wx < wy);
+    return (x > y) - (x < y);
+}
+
+static Py_ssize_t uf_find(Py_ssize_t *parent, Py_ssize_t i) {
+    while (parent[i] != i) {
+        parent[i] = parent[parent[i]];
+        i = parent[i];
+    }
+    return i;
+}
+
+// code -> dense id, open addressing; keys stored as code+1 so 0 marks empty
+// (codes are < 2^56, so +1 cannot wrap).
+typedef struct {
+    uint64_t *keys;
+    uint32_t *ids;
+    size_t mask;
+    uint32_t n;
+} CodeIds;
+
+static int code_ids_init(CodeIds *h, size_t cap) {
+    size_t c = 1024;
+    while (c < cap * 2) c <<= 1;
+    h->keys = calloc(c, sizeof *h->keys);
+    h->ids = malloc(c * sizeof *h->ids);
+    h->mask = c - 1;
+    h->n = 0;
+    return h->keys && h->ids;
+}
+
+static size_t code_slot(const CodeIds *h, uint64_t code) {
+    size_t i = (size_t)((code + 1) * 0x9E3779B97F4A7C15ULL >> 17) & h->mask;
+    while (h->keys[i] && h->keys[i] != code + 1) i = (i + 1) & h->mask;
+    return i;
+}
+
+// Returns the id, inserting if absent; UINT32_MAX when the table is full.
+static uint32_t code_id_put(CodeIds *h, uint64_t code) {
+    size_t i = code_slot(h, code);
+    if (!h->keys[i]) {
+        if ((size_t)h->n * 2 >= h->mask) return UINT32_MAX;
+        h->keys[i] = code + 1;
+        h->ids[i] = h->n++;
+    }
+    return h->ids[i];
+}
+
+static uint32_t code_id_get(const CodeIds *h, uint64_t code) {
+    size_t i = code_slot(h, code);
+    return h->keys[i] ? h->ids[i] : UINT32_MAX;
+}
+
+// Inverted index: rows containing each kmer id, each list ordered by
+// (width, row) so a width band is one contiguous run. `skip` is a
+// "next live entry" union-find over entries, advanced lazily as dead rows are
+// met, so each classified row is stepped over a bounded number of times.
+typedef struct {
+    size_t *start;       // per id, n_ids + 1
+    uint32_t *rows;
+    uint32_t *skip;
+} Postings;
+
+static uint32_t skip_find(uint32_t *skip, uint32_t i) {
+    while (skip[i] != i) {
+        skip[i] = skip[skip[i]];
+        i = skip[i];
+    }
+    return i;
+}
+
+static int postings_build(Postings *px, const CodeIds *ids, const uint64_t *codes,
+                          const Py_ssize_t *off, const Py_ssize_t *len,
+                          const Py_ssize_t *by_w, Py_ssize_t n) {
+    uint32_t n_ids = ids->n;
+    px->start = calloc((size_t)n_ids + 1, sizeof *px->start);
+    px->rows = NULL;
+    px->skip = NULL;
+    if (!px->start) return 0;
+    size_t total = 0;
+    for (Py_ssize_t i = 0; i < n; i++)
+        for (Py_ssize_t q = 0; q < len[i]; q++) px->start[code_id_get(ids, codes[off[i] + q]) + 1]++;
+    for (uint32_t c = 0; c < n_ids; c++) px->start[c + 1] += px->start[c];
+    total = px->start[n_ids];
+    if (total >= UINT32_MAX) return 0;
+    px->rows = malloc((total ? total : 1) * sizeof *px->rows);
+    px->skip = malloc((total + 1) * sizeof *px->skip);
+    size_t *fill = malloc(((size_t)n_ids + 1) * sizeof *fill);
+    if (!px->rows || !px->skip || !fill) { free(fill); return 0; }
+    memcpy(fill, px->start, ((size_t)n_ids + 1) * sizeof *fill);
+    for (Py_ssize_t p = 0; p < n; p++) {
+        Py_ssize_t i = by_w[p];
+        for (Py_ssize_t q = 0; q < len[i]; q++)
+            px->rows[fill[code_id_get(ids, codes[off[i] + q])]++] = (uint32_t)i;
+    }
+    for (size_t e = 0; e <= total; e++) px->skip[e] = (uint32_t)e;
+    free(fill);
+    return 1;
+}
+
+static void postings_free(Postings *px) {
+    free(px->start); free(px->rows); free(px->skip);
+}
+
+// Visit every live row of kmer `id` whose width lies in [lo, hi]: add `mult`
+// to its coverage in `acc` (row-major pairs, fw then rv, selected by `dir`),
+// and list it in `cand` the first time it is met this iteration.
+static void postings_collect(Postings *px, uint32_t id, uint32_t mult, int dir,
+                             long long lo, long long hi,
+                             const Py_ssize_t *width, const uint8_t *done,
+                             uint32_t *stamp, uint32_t iter, uint32_t *acc,
+                             uint32_t *cand, Py_ssize_t *nc) {
+    size_t a = px->start[id], b = px->start[id + 1], end = b;
+    while (a < b) {
+        size_t m = a + (b - a) / 2;
+        if (width[px->rows[m]] < lo) a = m + 1; else b = m;
+    }
+    for (uint32_t e = skip_find(px->skip, (uint32_t)a); e < end; e = skip_find(px->skip, e + 1)) {
+        uint32_t r = px->rows[e];
+        if (width[r] > hi) break;
+        if (done[r]) { px->skip[e] = e + 1; continue; }
+        if (stamp[r] != iter) {
+            stamp[r] = iter;
+            acc[2 * (size_t)r] = acc[2 * (size_t)r + 1] = 0;
+            cand[(*nc)++] = r;
+        }
+        acc[2 * (size_t)r + dir] += mult;
+    }
+}
+
+// classify_core(reps_fw, reps_rv, importance, k, size_dif, max_distance)
+//   -> (class_iter, class_width, is_rv), three lists of length n.
+// Row i's class is f"{class_width[i]}_{class_iter[i]}"; is_rv[i] means its
+// representative must be reverse-complemented. Representatives must be
+// non-empty ASCII strings.
+static PyObject *classify_core_impl(PyObject *self, PyObject *args) {
+    PyObject *fw_list, *rv_list, *imp_list;
+    int k;
+    double size_dif, max_distance;
+    if (!PyArg_ParseTuple(args, "O!O!O!idd", &PyList_Type, &fw_list, &PyList_Type, &rv_list,
+                          &PyList_Type, &imp_list, &k, &size_dif, &max_distance))
+        return NULL;
+    Py_ssize_t n = PyList_GET_SIZE(fw_list);
+    if (PyList_GET_SIZE(rv_list) != n || PyList_GET_SIZE(imp_list) != n) {
+        PyErr_SetString(PyExc_ValueError, "classify_core: list lengths differ");
+        return NULL;
+    }
+    if (k < 1 || k > 8) {
+        PyErr_SetString(PyExc_ValueError, "classify_core: k must be in 1..8");
+        return NULL;
+    }
+
+    Py_ssize_t total = 0;
+    for (Py_ssize_t i = 0; i < n; i++) {
+        PyObject *a = PyList_GET_ITEM(fw_list, i), *b = PyList_GET_ITEM(rv_list, i);
+        if (!PyUnicode_Check(a) || !PyUnicode_Check(b) || !PyUnicode_IS_ASCII(a) ||
+            !PyUnicode_IS_ASCII(b) || PyUnicode_GET_LENGTH(a) == 0 ||
+            PyUnicode_GET_LENGTH(a) != PyUnicode_GET_LENGTH(b)) {
+            PyErr_SetString(PyExc_ValueError,
+                            "classify_core: representatives must be non-empty ASCII str");
+            return NULL;
+        }
+        total += PyUnicode_GET_LENGTH(a);
+    }
+
+    double *imp = PyMem_Malloc((size_t)(n ? n : 1) * sizeof *imp);
+    Py_ssize_t *width = PyMem_Malloc((size_t)(n ? n : 1) * sizeof *width);
+    uint64_t *fw_codes = PyMem_Malloc((size_t)(total ? total : 1) * sizeof *fw_codes);
+    uint32_t *fw_counts = PyMem_Malloc((size_t)(total ? total : 1) * sizeof *fw_counts);
+    uint64_t *rv_codes = PyMem_Malloc((size_t)(total ? total : 1) * sizeof *rv_codes);
+    Py_ssize_t *off = PyMem_Malloc((size_t)(n ? n : 1) * sizeof *off);
+    Py_ssize_t *fw_len = PyMem_Malloc((size_t)(n ? n : 1) * sizeof *fw_len);
+    Py_ssize_t *rv_len = PyMem_Malloc((size_t)(n ? n : 1) * sizeof *rv_len);
+    Py_ssize_t *by_imp = PyMem_Malloc((size_t)(n ? n : 1) * sizeof *by_imp);
+    Py_ssize_t *by_w = PyMem_Malloc((size_t)(n ? n : 1) * sizeof *by_w);
+    Py_ssize_t *w_sorted = PyMem_Malloc((size_t)(n ? n : 1) * sizeof *w_sorted);
+    Py_ssize_t *pos_of = PyMem_Malloc((size_t)(n ? n : 1) * sizeof *pos_of);
+    Py_ssize_t *parent = PyMem_Malloc((size_t)(n + 1) * sizeof *parent);
+    long long *class_iter = PyMem_Calloc((size_t)(n ? n : 1), sizeof *class_iter);
+    Py_ssize_t *class_w = PyMem_Calloc((size_t)(n ? n : 1), sizeof *class_w);
+    uint8_t *done = PyMem_Calloc((size_t)(n ? n : 1), 1);
+    uint8_t *is_rv = PyMem_Calloc((size_t)(n ? n : 1), 1);
+    PyObject *result = NULL;
+    int stuck = 0, index_failed = 0;
+    CodeIds ids = {NULL, NULL, 0, 0};
+    Postings px_fw = {NULL, NULL, NULL}, px_rv = {NULL, NULL, NULL};
+    uint32_t *stamp = NULL, *cand = NULL, *acc = NULL;
+    if (!imp || !width || !fw_codes || !fw_counts || !rv_codes || !off || !fw_len || !rv_len ||
+        !by_imp || !by_w || !w_sorted || !pos_of || !parent || !class_iter || !class_w ||
+        !done || !is_rv) {
+        PyErr_NoMemory();
+        goto cleanup;
+    }
+
+    Py_ssize_t o = 0;
+    for (Py_ssize_t i = 0; i < n; i++) {
+        PyObject *item = PyList_GET_ITEM(imp_list, i);
+        imp[i] = PyFloat_AsDouble(item);
+        if (imp[i] == -1.0 && PyErr_Occurred()) goto cleanup;
+        width[i] = PyUnicode_GET_LENGTH(PyList_GET_ITEM(fw_list, i));
+        off[i] = o;
+        o += width[i];
+    }
+
+    Py_BEGIN_ALLOW_THREADS
+    for (Py_ssize_t i = 0; i < n; i++) {
+        fw_len[i] = circular_bag(PyUnicode_1BYTE_DATA(PyList_GET_ITEM(fw_list, i)), width[i], k,
+                                 fw_codes + off[i], fw_counts + off[i]);
+        rv_len[i] = circular_bag(PyUnicode_1BYTE_DATA(PyList_GET_ITEM(rv_list, i)), width[i], k,
+                                 rv_codes + off[i], NULL);
+    }
+
+    for (Py_ssize_t i = 0; i < n; i++) by_imp[i] = by_w[i] = i;
+    cls_imp_key = imp;
+    qsort(by_imp, (size_t)n, sizeof *by_imp, cmp_by_importance);
+    cls_width_key = width;
+    qsort(by_w, (size_t)n, sizeof *by_w, cmp_by_width);
+    for (Py_ssize_t p = 0; p < n; p++) {
+        w_sorted[p] = width[by_w[p]];
+        pos_of[by_w[p]] = p;
+    }
+    for (Py_ssize_t p = 0; p <= n; p++) parent[p] = p;
+
+    // Kmer ids and inverted indexes over each row's fw and rv kmer sets.
+    stamp = calloc((size_t)(n ? n : 1), sizeof *stamp);
+    cand = malloc((size_t)(n ? n : 1) * sizeof *cand);
+    acc = malloc((size_t)(n ? n : 1) * 2 * sizeof *acc);
+    if ((uint64_t)n >= UINT32_MAX || !stamp || !cand || !acc || !code_ids_init(&ids, 1u << 16))
+        index_failed = 1;
+    for (Py_ssize_t i = 0; i < n && !index_failed; i++) {
+        for (int dir = 0; dir < 2 && !index_failed; dir++) {
+            const uint64_t *c = (dir ? rv_codes : fw_codes) + off[i];
+            Py_ssize_t m = dir ? rv_len[i] : fw_len[i];
+            for (Py_ssize_t q = 0; q < m; q++) {
+                if (code_id_put(&ids, c[q]) != UINT32_MAX) continue;
+                // grow and rehash
+                CodeIds bigger;
+                if (!code_ids_init(&bigger, (size_t)ids.n * 2)) { index_failed = 1; break; }
+                for (size_t sl = 0; sl <= ids.mask; sl++)
+                    if (ids.keys[sl]) {
+                        size_t t = code_slot(&bigger, ids.keys[sl] - 1);
+                        bigger.keys[t] = ids.keys[sl];
+                        bigger.ids[t] = ids.ids[sl];
+                    }
+                bigger.n = ids.n;
+                free(ids.keys); free(ids.ids);
+                ids = bigger;
+                q--;
+            }
+        }
+    }
+    if (!index_failed &&
+        (!postings_build(&px_fw, &ids, fw_codes, off, fw_len, by_w, n) ||
+         !postings_build(&px_rv, &ids, rv_codes, off, rv_len, by_w, n)))
+        index_failed = 1;
+
+    const double f_lo = 1.0 - size_dif, f_hi = 1.0 + size_dif;
+    Py_ssize_t remaining = index_failed ? 0 : n, ip = 0;
+    long long names_iterator = 1;
+    uint32_t iter_stamp = 0;
+    while (remaining > 0) {
+        while (ip < n && done[by_imp[ip]]) ip++;
+        Py_ssize_t top;
+        if (ip < n && imp[by_imp[ip]] > 0.0) {
+            top = by_imp[ip];
+        } else {
+            // Exact R `which.max` over every row, classified ones included
+            // (they hold 0). Python's -1 on all-NaN indexes the last row.
+            double best = -INFINITY;
+            top = -1;
+            for (Py_ssize_t i = 0; i < n; i++)
+                if (imp[i] > best) { best = imp[i]; top = i; }
+            if (top < 0) top = n - 1;
+        }
+
+        Py_ssize_t tw = width[top];
+        long long lo = (long long)floor((double)tw * f_lo);
+        long long hi = (long long)ceil((double)tw * f_hi);
+        Py_ssize_t a = 0, b = n;
+        while (a < b) { Py_ssize_t m = a + (b - a) / 2; if (w_sorted[m] < lo) a = m + 1; else b = m; }
+        Py_ssize_t band_lo = a;
+        b = n;
+        while (a < b) { Py_ssize_t m = a + (b - a) / 2; if (w_sorted[m] <= hi) a = m + 1; else b = m; }
+        Py_ssize_t band_hi = a;
+
+        const uint64_t *tc = fw_codes + off[top];
+        const uint32_t *tn = fw_counts + off[top];
+        Py_ssize_t ta = fw_len[top];
+        double top_len = (double)tw;
+        Py_ssize_t newly = 0;
+
+        // A candidate with zero coverage both ways has distance 1 and can only
+        // be captured if max_distance >= 1 (t == 0 below). Otherwise every
+        // capturable row shares a kmer with top, so walking top's postings
+        // finds them all and accumulates their exact fw and rv coverage.
+        Py_ssize_t t = 0;
+        while (t <= tw && !(1 - (double)t / top_len <= max_distance)) t++;
+        Py_ssize_t nc = 0;
+        int scan_all = 0;
+        iter_stamp++;
+        if (t > 0 && t <= tw) {
+            for (Py_ssize_t q = 0; q < ta; q++) {
+                uint32_t id = code_id_get(&ids, tc[q]);
+                postings_collect(&px_fw, id, tn[q], 0, lo, hi, width, done,
+                                 stamp, iter_stamp, acc, cand, &nc);
+                postings_collect(&px_rv, id, tn[q], 1, lo, hi, width, done,
+                                 stamp, iter_stamp, acc, cand, &nc);
+            }
+        } else if (t == 0) {
+            scan_all = 1;
+            for (Py_ssize_t p = uf_find(parent, band_lo); p < band_hi; p = uf_find(parent, p + 1))
+                cand[nc++] = (uint32_t)by_w[p];
+        }
+
+        for (Py_ssize_t ci = 0; ci < nc; ci++) {
+            Py_ssize_t j = cand[ci];
+            if (j == top) continue;
+            Py_ssize_t p = pos_of[j];
+            Py_ssize_t sfw, srv;
+            if (scan_all) {
+                sfw = bag_coverage(tc, tn, ta, fw_codes + off[j], fw_len[j]);
+                srv = bag_coverage(tc, tn, ta, rv_codes + off[j], rv_len[j]);
+            } else {
+                sfw = acc[2 * (size_t)j];
+                srv = acc[2 * (size_t)j + 1];
+            }
+            double dfw = 1 - (double)sfw / top_len;
+            double drv = 1 - (double)srv / top_len;
+            if (dfw >= drv) dfw = 1.0; else drv = 1.0;
+            int hit_fw = dfw <= max_distance, hit_rv = drv <= max_distance;
+            if (hit_fw || hit_rv) {
+                done[j] = 1;
+                imp[j] = 0.0;
+                class_iter[j] = names_iterator;
+                class_w[j] = tw;
+                if (hit_rv) is_rv[j] = 1;
+                parent[p] = p + 1;
+                remaining--;
+                newly++;
+            }
+        }
+
+        if (!done[top]) {
+            done[top] = 1;
+            parent[pos_of[top]] = pos_of[top] + 1;
+            remaining--;
+            newly++;
+        }
+        class_iter[top] = names_iterator;
+        class_w[top] = tw;
+        imp[top] = 0.0;
+        names_iterator++;
+        // An already-classified top that captured nothing leaves the state
+        // unchanged, so every later iteration would repeat it: the Python loop
+        // never terminates here. Fail loudly instead.
+        if (newly == 0) { stuck = 1; break; }
+    }
+    Py_END_ALLOW_THREADS
+
+    if (index_failed) {
+        PyErr_NoMemory();
+        goto cleanup;
+    }
+    if (stuck) {
+        PyErr_SetString(PyExc_RuntimeError,
+                        "classify_core: no progress (unclassified rows with importance <= 0)");
+        goto cleanup;
+    }
+
+    PyObject *l_iter = PyList_New(n), *l_w = PyList_New(n), *l_rv = PyList_New(n);
+    if (!l_iter || !l_w || !l_rv) { Py_XDECREF(l_iter); Py_XDECREF(l_w); Py_XDECREF(l_rv); goto cleanup; }
+    for (Py_ssize_t i = 0; i < n; i++) {
+        PyObject *x = PyLong_FromLongLong(class_iter[i]), *y = PyLong_FromSsize_t(class_w[i]);
+        if (!x || !y) { Py_XDECREF(x); Py_XDECREF(y); Py_DECREF(l_iter); Py_DECREF(l_w); Py_DECREF(l_rv); goto cleanup; }
+        PyList_SET_ITEM(l_iter, i, x);
+        PyList_SET_ITEM(l_w, i, y);
+        PyObject *r = is_rv[i] ? Py_True : Py_False;
+        Py_INCREF(r);
+        PyList_SET_ITEM(l_rv, i, r);
+    }
+    result = Py_BuildValue("(NNN)", l_iter, l_w, l_rv);
+
+cleanup:
+    PyMem_Free(imp); PyMem_Free(width); PyMem_Free(fw_codes); PyMem_Free(fw_counts);
+    PyMem_Free(rv_codes); PyMem_Free(off); PyMem_Free(fw_len); PyMem_Free(rv_len);
+    PyMem_Free(by_imp); PyMem_Free(by_w); PyMem_Free(w_sorted); PyMem_Free(pos_of);
+    PyMem_Free(parent); PyMem_Free(class_iter); PyMem_Free(class_w); PyMem_Free(done);
+    PyMem_Free(is_rv);
+    free(ids.keys); free(ids.ids);
+    postings_free(&px_fw); postings_free(&px_rv);
+    free(stamp); free(cand); free(acc);
+    return result;
+}
+
 static PyMethodDef module_methods[] = {
+    {
+        "classify_core",
+        classify_core_impl,
+        METH_VARARGS,
+        PyDoc_STR("Greedy kmer-coverage classification loop of classify_repeats.")
+    },
     {
         "find_hors",
         find_hors_impl,
