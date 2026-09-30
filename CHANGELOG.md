@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.5] - 2026-09-30
+
+### Fixed
+
+- **GFF records now end in LF.** `_arrays.gff` and `_repeats.gff` ended every
+  record with a bare CR (`\r`) and contained no newline, reproducing upstream
+  TRASH byte for byte. Most tools (`wc -l`, `grep`, `awk`, genome browsers,
+  GFF parsers) therefore read each file as a single line with every record run
+  together. Records are now LF-terminated, one per line. This deliberately
+  departs from upstream's bytes; the records themselves are unchanged. GFFs
+  written by earlier versions can be converted with `tr '\r' '\n'`.
+
 ## [2.7.4] - 2026-09-24
 
 ### Changed

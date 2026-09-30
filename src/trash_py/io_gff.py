@@ -1,8 +1,8 @@
-"""GFF writer matching upstream TRASH output.
+"""GFF writer.
 
-`export_gff` writes tab-separated records with a CR (`\\r`) record
-separator — that's what the R reference produces, and downstream
-tooling depends on the exact bytes.
+`export_gff` writes tab-separated records, one per line, each ending in LF.
+Upstream TRASH ends records with a bare CR, which most tools read as a
+single line; trash-py matched that byte for byte until 2.7.5.
 """
 from __future__ import annotations
 
@@ -76,4 +76,4 @@ def export_gff(
                 strand_col[i], phase_col[i], attr_col[i],
             ]
             f.write("\t".join(fields))
-            f.write("\r")
+            f.write("\n")

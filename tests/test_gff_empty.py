@@ -45,5 +45,18 @@ def test_export_gff_still_writes_rows(tmp_path: Path) -> None:
         attributes="Name=178_1",
     )
     body = out.read_bytes()
-    assert body.endswith(b"\r")
+    assert body.endswith(b"\n")
     assert b"TRASH" in body and b"Satellite_DNA" in body
+
+
+def test_export_gff_uses_lf_terminators(tmp_path: Path) -> None:
+    # one record per line: LF-terminated, never the bare CR upstream TRASH writes
+    out = tmp_path / "two.gff"
+    rows = [{"start": 10, "end": 20, "seqID": "chr1", "class": "178_1"},
+            {"start": 30, "end": 40, "seqID": "chr1", "class": "178_1"}]
+    export_gff(rows, out, seqid="chr1", source="TRASH", type_="Satellite_DNA",
+               start="10", end="20", attributes="Name=178_1")
+    body = out.read_bytes()
+    assert b"\r" not in body
+    assert body.count(b"\n") == 2 and body.endswith(b"\n")
+    assert len(out.read_text().splitlines()) == 2
